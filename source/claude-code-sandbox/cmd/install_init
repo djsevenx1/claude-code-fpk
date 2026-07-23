@@ -25,10 +25,18 @@ log "node=$(node -v) npm=$(npm -v)"
 
 # 2. 架构
 ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
+# 规范化：fnOS 0.9.x 早期版本会把 x86_64 上报为 "x86"，某些容器/32-bit 兼容层
+# 会报 "i386/i686"。这里把常见别名都归一化到 x86_64 / aarch64 再判定。
 case "$ARCH" in
-    x86_64)  log "架构 OK: x86_64" ;;
+    x86_64|amd64|x86)            NORM_ARCH="x86_64"  ;;
+    aarch64|arm64)                NORM_ARCH="aarch64" ;;
+    i386|i686|i486|i586)          NORM_ARCH="i386"    ;;
+    *)                            NORM_ARCH="$ARCH"   ;;
+esac
+case "$NORM_ARCH" in
+    x86_64)  log "架构 OK: x86_64 (raw=$ARCH)" ;;
     aarch64) log "架构 OK: aarch64 (但本包仅 platform=x86，不保证能装)" ;;
-    *) die "不支持的 CPU 架构: $ARCH（本包仅支持 x86_64）" ;;
+    *) die "不支持的 CPU 架构: $ARCH（仅支持 x86_64）" ;;
 esac
 
 # 3. 网络可达性（不阻塞，给 install_callback 用）
