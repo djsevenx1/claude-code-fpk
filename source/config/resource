@@ -1,0 +1,22 @@
+{
+  "data-share": {
+    "shares": [
+      {
+        "name": "claude-code-sandbox",
+        "permission": {
+          "rw": [
+            "claude-code-sandbox"
+          ]
+        }
+      },
+      {
+        "name": "claude-code-sandbox/data",
+        "permission": {
+          "rw": [
+            "claude-code-sandbox"
+          ]
+        }
+      }
+    ]
+  }
+}

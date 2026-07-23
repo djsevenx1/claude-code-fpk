@@ -1,0 +1,40 @@
+#!/bin/bash
+# Claude Code 沙箱 - 安装初始化
+# 预检：架构、网络、Node.js 运行时、磁盘空间
+
+set -e
+
+# 1. 架构检查
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)  ;;
+    aarch64) ;;
+    armv7l)  ;;
+    *) echo "不支持的 CPU 架构: $ARCH" > "$TRIM_TEMP_LOGFILE"; exit 1 ;;
+esac
+
+# 2. Node.js 依赖检查（应用商店装好后，这里应该已存在）
+NODEJS_PATH="/var/apps/nodejs_v22/target/bin"
+if [ ! -x "${NODEJS_PATH}/node" ]; then
+    echo "未检测到 nodejs_v22，请先在应用商店安装该运行时" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+
+# 3. 网络检查（下载 ttyd + npm 包必需）
+if ! curl -fsI --max-time 10 https://github.com/ >/dev/null 2>&1; then
+    if ! curl -fsI --max-time 10 https://registry.npmmirror.com/ >/dev/null 2>&1; then
+        echo "无法访问 GitHub / npmmirror，请检查 NAS 网络" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+fi
+
+# 4. 磁盘空间检查（需要至少 200MB：ttyd 5 + Claude Code 150 + 缓存）
+if command -v df >/dev/null 2>&1; then
+    AVAIL_KB=$(df -Pk "${TRIM_APPDEST:-/var/apps}" 2>/dev/null | awk 'NR==2 {print $4}')
+    if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 204800 ]; then
+        echo "可用空间不足 200MB（当前 ${AVAIL_KB}KB），请清理后重试" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+fi
+
+exit 0

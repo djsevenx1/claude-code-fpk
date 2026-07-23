@@ -1,0 +1,4 @@
+release/
+fpk/
+*.log
+.DS_Store

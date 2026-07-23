@@ -1,0 +1,29 @@
+appname               = claude-code-sandbox
+version               = 1.0.0
+display_name          = Claude Code 沙箱
+desc                  = "在 fnOS 上原生运行 Claude Code CLI，提供 Web 终端（ttyd）访问。依赖应用商店 nodejs_v22（自动安装），无需 Docker。<br/><br/>需 Anthropic API Key 或第三方代理，支持 /login 官方订阅。Claude Code 进程以非 root 运行，仅可访问授权目录。建议为 Web 终端设置 Basic 认证。"
+source                = thirdparty
+platform              = x86
+arch                  = x86_64
+
+# 关键：声明 Node.js 运行时依赖，飞牛应用商店会自动安装
+install_dep_apps      = nodejs_v22
+
+maintainer            = fnOS Community
+maintainer_url        = https://github.com/anthropics/claude-code
+
+distributor           = fnOS Community
+distributor_url       = https://github.com/anthropics/claude-code
+
+os_min_version        = 0.9.27
+
+desktop_uidir         = ui
+desktop_applaunchname = claude-code-sandbox.Application
+
+service_port          = 7681
+checkport             = true
+ctl_stop              = true
+
+disable_authorization_path = false
+
+changelog             = 首次发布。基于应用商店 nodejs_v22 + ttyd 1.7.7 + Claude Code CLI 最新版，原生运行，无 Docker 依赖。

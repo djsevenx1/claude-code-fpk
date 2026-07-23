@@ -1,0 +1,9 @@
+#!/bin/bash
+# 卸载回调：清理 .env 中可能包含的敏感信息
+if [ -n "${TRIM_PKGETC:-}" ] && [ -f "${TRIM_PKGETC}/claude.env" ]; then
+    shred -u "${TRIM_PKGETC}/claude.env" 2>/dev/null || rm -f "${TRIM_PKGETC}/claude.env"
+fi
+if [ -n "${TRIM_PKGHOME:-}" ]; then
+    find "${TRIM_PKGHOME}/home/.claude" -name 'settings.json' -delete 2>/dev/null || true
+fi
+exit 0

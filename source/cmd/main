@@ -1,0 +1,121 @@
+#!/bin/bash
+#
+# Claude Code 沙箱 — 生命周期管理
+# start:  启动 ttyd（Web 终端）
+# stop:   优雅停止，超时 SIGKILL
+# status: 查询进程状态
+#
+
+# 引入应用商店装的 Node.js v22
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+
+TRIM_APPDEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox}"
+TRIM_PKGETC="${TRIM_PKGETC:-/etc/claude-code-sandbox}"
+TRIM_PKGVAR="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}"
+TRIM_PKGHOME="${TRIM_PKGHOME:-/var/apps/claude-code-sandbox/home}"
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+
+ENV_FILE="${TRIM_PKGETC}/claude.env"
+TTYD_BIN="${TRIM_APPDEST}/bin/ttyd"
+CLAUDE_HOME="${TRIM_PKGHOME}/home"
+
+# Claude Code 用应用目录下的 node_modules，避免污染全局
+export NODE_PATH="${TRIM_APPDEST}/node_modules"
+export PATH="${TRIM_APPDEST}/node_modules/.bin:/var/apps/nodejs_v22/target/bin:${PATH}"
+
+log_msg() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"; }
+
+start_process() {
+    if status; then return 0; fi
+
+    # 前置检查
+    if [ ! -x "${TTYD_BIN}" ]; then
+        log_msg "ttyd 不存在: ${TTYD_BIN}（install_callback 未执行？）"
+        return 1
+    fi
+
+    if [ ! -d "${CLAUDE_HOME}" ]; then
+        mkdir -p "${CLAUDE_HOME}"
+    fi
+
+    # 加载 .env
+    if [ -r "${ENV_FILE}" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        . "${ENV_FILE}"
+        set +a
+    fi
+
+    TTYD_PORT="${TTYD_PORT:-7681}"
+    TTYD_ARGS=(
+        -p "${TTYD_PORT}"
+        -W
+        -t fontSize=14
+        -t fontFamily='"Cascadia Code","Fira Code","Source Code Pro",Consolas,monospace'
+        -t theme='"dark"'
+        -t cursorBlink=true
+    )
+
+    # Basic 认证
+    if [ -n "${TTYD_USER:-}" ] && [ -n "${TTYD_PASSWORD:-}" ]; then
+        TTYD_ARGS+=( -c "${TTYD_USER}:${TTYD_PASSWORD}" )
+        log_msg "ttyd Basic 认证已启用 (user: ${TTYD_USER})"
+    elif [ -n "${TTYD_PASSWORD:-}" ]; then
+        TTYD_ARGS+=( -c ":${TTYD_PASSWORD}" )
+        log_msg "ttyd Basic 认证已启用 (仅密码)"
+    fi
+
+    # 工作目录切到用户 home，HOME 指过去保证 claude 能找到 ~/.claude
+    cd "${CLAUDE_HOME}"
+
+    log_msg "Starting ttyd on port ${TTYD_PORT} ..."
+    cd "${CLAUDE_HOME}" && HOME="${CLAUDE_HOME}" "${TTYD_BIN}" "${TTYD_ARGS[@]}" bash >>"${LOG_FILE}" 2>&1 &
+    local pid=$!
+    echo "${pid}" > "${PID_FILE}"
+    log_msg "ttyd started, pid=${pid}"
+
+    # 等待 ttyd 端口就绪
+    local i
+    for i in $(seq 1 20); do
+        if curl -fs --max-time 1 "http://127.0.0.1:${TTYD_PORT}/" >/dev/null 2>&1; then
+            log_msg "ttyd 端口 ${TTYD_PORT} 就绪"
+            return 0
+        fi
+        sleep 0.5
+    done
+
+    log_msg "WARNING: ttyd 启动后端口 ${TTYD_PORT} 未就绪，请检查日志"
+    return 0
+}
+
+stop_process() {
+    log_msg "Stopping ttyd ..."
+    if [ -r "${PID_FILE}" ]; then
+        local pid
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -TERM "${pid}"
+            local i
+            for i in $(seq 1 10); do
+                sleep 1
+                kill -0 "${pid}" 2>/dev/null || { log_msg "ttyd stopped"; rm -f "${PID_FILE}"; return 0; }
+            done
+            kill -KILL "${pid}" 2>/dev/null
+        fi
+        rm -f "${PID_FILE}"
+    fi
+    return 0
+}
+
+status() {
+    [ -f "${PID_FILE}" ] && local pid && pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]') && kill -0 "${pid}" 2>/dev/null
+}
+
+case $1 in
+start)   start_process ;;
+stop)    stop_process ;;
+status)  status && exit 0 || exit 3 ;;
+*)       exit 1 ;;
+esac

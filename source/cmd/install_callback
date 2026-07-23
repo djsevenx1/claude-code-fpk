@@ -1,0 +1,153 @@
+#!/bin/bash
+# Claude Code 沙箱 - 安装回调
+# 步骤：
+#   1) 下载 ttyd 静态二进制
+#   2) 用 npm 安装 Claude Code CLI（全局，存到应用目录）
+#   3) 写入 .env 配置
+#   4) 生成 ~/.claude/settings.json
+
+set -e
+
+# 引入 fnOS 应用商店装的 Node.js v22
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+
+: "${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
+: "${TRIM_PKGETC:?TRIM_PKGETC 未设置}"
+: "${TRIM_PKGVAR:?TRIM_PKGVAR 未设置}"
+: "${TRIM_PKGHOME:?TRIM_PKGHOME 未设置}"
+
+# ------ 路径与版本 ------
+APP_HOME="${TRIM_APPDEST}"
+BIN_DIR="${APP_HOME}/bin"
+ENV_FILE="${TRIM_PKGETC}/claude.env"
+HOME_DIR="${TRIM_PKGHOME}/home"
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+NODE_MODULES_DIR="${APP_HOME}/node_modules"
+NODE_BIN_DIR="${APP_HOME}/node_modules/.bin"
+
+TTYD_VERSION="1.7.7"
+NPM_REGISTRY_DEFAULT="https://registry.npmmirror.com"
+
+mkdir -p "${BIN_DIR}" "${TRIM_PKGVAR}" "${TRIM_PKGHOME}" "${HOME_DIR}"
+
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "${LOG_FILE}"; }
+log "开始安装 Claude Code 沙箱（应用目录：${APP_HOME}）"
+log "Node.js: $(node -v), npm: $(npm -v)"
+
+# ------ 1) ttyd 静态二进制 ------
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)  TTYD_ARCH="x86_64"  ;;
+    aarch64) TTYD_ARCH="aarch64" ;;
+    armv7l)  TTYD_ARCH="armhf"   ;;
+    *) echo "不支持的 CPU 架构: $ARCH" > "$TRIM_TEMP_LOGFILE"; exit 1 ;;
+esac
+
+if [ ! -x "${BIN_DIR}/ttyd" ]; then
+    log "下载 ttyd ${TTYD_VERSION}（${TTYD_ARCH}）..."
+    if ! curl -fsSL --max-time 60 \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
+        -o "${BIN_DIR}/ttyd"; then
+        echo "ttyd 下载失败，请检查网络后重试" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+    chmod +x "${BIN_DIR}/ttyd"
+    log "ttyd 安装完成"
+fi
+
+# 设置 npm registry（国内可达）
+npm config set registry "${NPM_REGISTRY_DEFAULT}" >/dev/null 2>&1
+
+# ------ 2) Claude Code CLI（安装到应用目录） ------
+# 不污染应用商店的 nodejs_v22，安装到我们自己的目录
+if [ ! -x "${NODE_BIN_DIR}/claude" ]; then
+    log "安装 Claude Code CLI..."
+    cd "${APP_HOME}"
+    if ! npm install --prefix "${APP_HOME}" @anthropic-ai/claude-code >>"${LOG_FILE}" 2>&1; then
+        echo "Claude Code 安装失败，请查看日志 ${LOG_FILE}" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+    log "Claude Code 安装完成: ${NODE_BIN_DIR}/claude"
+fi
+
+# ------ 3) 写入 .env ------
+write_kv () {
+    local key="$1"
+    local val="$2"
+    if [ -n "$val" ]; then
+        val=$(printf '%s' "$val" | tr -d '\r\n')
+        printf '%s=%s\n' "$key" "$val" >> "${ENV_FILE}"
+    fi
+}
+
+: > "${ENV_FILE}"
+chmod 600 "${ENV_FILE}"
+
+write_kv TTYD_USER             "${wizard_ttyd_user:-}"
+write_kv TTYD_PASSWORD         "${wizard_ttyd_password:-}"
+write_kv TTYD_PORT             "${wizard_service_port:-7681}"
+write_kv ANTHROPIC_BASE_URL    "${wizard_anthropic_base_url:-}"
+write_kv ANTHROPIC_MODEL       "${wizard_anthropic_model:-}"
+write_kv ANTHROPIC_API_KEY     "${wizard_anthropic_api_key:-}"
+write_kv ANTHROPIC_AUTH_TOKEN  "${wizard_anthropic_auth_token:-}"
+
+# ------ 4) 写入 ~/.claude/settings.json ------
+CLAUDE_HOME="${HOME_DIR}/.claude"
+mkdir -p "${CLAUDE_HOME}"
+
+# 读取刚写入的 .env，构造 env 块
+if [ -r "${ENV_FILE}" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${ENV_FILE}"
+    set +a
+fi
+
+build_env_json() {
+    local first=1 out=""
+    for k in ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL; do
+        local v="${!k:-}"
+        if [ -n "$v" ]; then
+            if [ "$first" -eq 0 ]; then out+=","; fi
+            local esc
+            esc=$(printf '%s' "$v" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || \
+                  printf '%s' "$v" | sed 's/\\/\\\\/g;s/"/\\"/g' | awk '{printf "\"%s\"", $0}')
+            out+="\"$k\":$esc"
+            first=0
+        fi
+    done
+    printf '%s' "$out"
+}
+
+ENV_JSON=$(build_env_json)
+if [ -n "$ENV_JSON" ]; then
+    cat > "${CLAUDE_HOME}/settings.json" <<EOF
+{
+  "env": { ${ENV_JSON} },
+  "hasCompletedOnboarding": true
+}
+EOF
+    chmod 600 "${CLAUDE_HOME}/settings.json"
+    log "已生成 ${CLAUDE_HOME}/settings.json"
+fi
+
+# 标记完成 onboarding
+if [ ! -f "${HOME_DIR}/.claude.json" ]; then
+    cat > "${HOME_DIR}/.claude.json" <<'EOF'
+{
+  "hasCompletedOnboarding": true
+}
+EOF
+fi
+
+# 项目工作目录
+mkdir -p "${HOME_DIR}/workspace"
+
+# 修正权限（运行用户）
+PACKAGE_USER=$(stat -c '%U' "${TRIM_APPDEST}" 2>/dev/null || echo "root")
+if [ "${PACKAGE_USER}" != "root" ]; then
+    chown -R "${PACKAGE_USER}:${PACKAGE_USER}" "${TRIM_PKGHOME}" "${APP_HOME}/node_modules" 2>/dev/null || true
+fi
+
+log "安装完成"
+exit 0
