@@ -1,6 +1,6 @@
 appname=claude-code-sandbox
-version=1.1.0
-display_name=Claude Code 沙箱
+version=1.2.0
+display_name=Claude Code
 desc=<p>把 Anthropic Claude Code CLI 装到飞牛 NAS 上，以<b>包用户 + 工作目录隔离</b>方式沙箱运行，通过 Web 终端 (ttyd) 访问。</p><p>依赖 fnOS 应用商店的 <code>nodejs_v22</code> 运行时。</p>
 source=thirdparty
 platform=x86
@@ -15,4 +15,4 @@ install_type=root
 install_dep_apps=nodejs_v22
 ctl_stop=true
 disable_authorization_path=false
-changelog=<ul><li>1.1.0 修复 install_callback "执行脚本出错且原因未知"：增加 trap ERR 与 TRIM_TEMP_LOGFILE 兜底</li><li>1.1.0 补齐 wizard/install 与 wizard/config，向导变量可填 ANTHROPIC_AUTH_TOKEN</li><li>1.1.0 cmd/main 用 runuser 切到包用户启动 ttyd，沙箱仅访问工作目录</li><li>1.1.0 升级到 fnpack 1.2.3 打包规范（ICON.PNG 64x64，ICON_256.PNG 256x256）</li></ul>
+changelog=<ul><li>1.2.0 修"安装中 100%"卡住：install_init/install_callback 不再把 log 写到 TRIM_TEMP_LOGFILE，成功路径主动清空该文件</li><li>1.2.0 display_name 改为 "Claude Code"，去掉"沙箱"两字</li><li>1.2.0 重新设计图标：透明背景 + 高对比，在白色商店背景中更醒目</li><li>1.1.1 兼容 fnOS 0.9.x 把 x86_64 上报为 x86</li><li>1.1.0 修 install_callback "执行脚本出错且原因未知"、补齐 wizard</li></ul>

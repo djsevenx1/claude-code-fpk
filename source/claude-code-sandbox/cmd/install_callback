@@ -29,7 +29,8 @@ die() {
     exit 1
 }
 
-# 关键 trap：任何 set -u 之外的未捕获错误都向 UI 写可读消息
+# 关键 trap：任何未捕获错误都向 UI 写可读消息
+# 必须在所有 : "${VAR:?msg}" 校验之前安装，否则变量校验失败时 trap 还没生效
 on_err() {
     local rc=$?
     local line=${BASH_LINENO[0]:-?}
@@ -195,4 +196,6 @@ fi
 
 log "install_callback 完成"
 trap - ERR
+# 成功路径下清空 TRIM_TEMP_LOGFILE，避免 fnOS 商店把它当错误显示
+: > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
 exit 0

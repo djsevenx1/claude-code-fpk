@@ -4,15 +4,35 @@
 set -u
 export PATH="/var/apps/nodejs_v22/target/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# 兜底：TRIM_TEMP_LOGFILE 在某些 fnOS 版本可能为空，写一个默认路径
+# UI 错误文件：只在 die() 时写，**绝不在 log 里写**
+# （fnOS 商店会把 TRIM_TEMP_LOGFILE 的任何内容当作用户可见错误，
+#  导致"安装中 100%"卡住不消失。）
 TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
 mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
-exec 2>>"$TRIM_TEMP_LOGFILE"
 
-die() { echo "$*" >&2; echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
-log() { echo "[$(date '+%H:%M:%S')] $*" >&2; }
+# 日志走 NAS 应用日志目录
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+
+die() { echo "[$(date '+%H:%M:%S')] FATAL: $*" >>"$LOG_FILE"; echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
 
 log "install_init: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
+
+# 0. 幂等：检测是否重装（v1.1.x 残留）。残留会让 fnOS 商店进度回滚
+OLD_INSTALLED=""
+[ -x /var/apps/claude-code-sandbox/cmd/main ] && OLD_INSTALLED="1"
+if [ -n "$OLD_INSTALLED" ]; then
+    log "检测到旧版本残留，先执行 uninstall_init 清理"
+    if [ -x /var/apps/claude-code-sandbox/cmd/uninstall_init ]; then
+        bash /var/apps/claude-code-sandbox/cmd/uninstall_init || true
+    fi
+    # 清理可能冲突的 ttyd 旧二进制
+    rm -f /var/apps/claude-code-sandbox/target/bin/ttyd 2>/dev/null || true
+    # 清理 node_modules（强制 install_callback 重新装，避免版本不一致）
+    rm -rf /var/apps/claude-code-sandbox/target/node_modules 2>/dev/null || true
+    log "旧残留清理完成"
+fi
 
 # 1. nodejs_v22 运行时
 if ! command -v node >/dev/null 2>&1; then
@@ -54,4 +74,6 @@ if command -v curl >/dev/null 2>&1; then
 fi
 
 log "install_init OK"
+# 关键：成功路径下确保 TRIM_TEMP_LOGFILE 不存在/为空，商店才会切到"完成"
+: > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
 exit 0
