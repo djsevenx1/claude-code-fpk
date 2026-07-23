@@ -35,13 +35,30 @@ if [ -n "$OLD_INSTALLED" ]; then
 fi
 
 # 1. nodejs_v22 运行时
-if ! command -v node >/dev/null 2>&1; then
-    die "未检测到 node 运行时，请先在应用商店安装 nodejs_v22"
+# 关键：manifest 里有 install_dep_apps=nodejs_v22，fnOS 应用商店会**自己弹窗**问用户
+# 要不要装。我们这里不挡路（之前 v1.1.x 直接 die 把安装流程打回 0% 进度）。
+# 只在用户已经"忽略"或"拒绝"依赖安装时才报错，且报错信息要清晰指引。
+NODEJS_PATH="/var/apps/nodejs_v22/target/bin"
+if ! command -v node >/dev/null 2>&1 && [ ! -x "$NODEJS_PATH/node" ]; then
+    # node 找不到，提示用户走应用商店
+    die "未检测到 nodejs_v22 运行时。
+
+请回飞牛应用中心 → 我的应用 → 找到 'nodejs_v22' → 手动点安装。
+装好后再重新点 Claude Code 的'安装'按钮。
+
+（manifest 已声明 install_dep_apps=nodejs_v22，理论上 fnOS 商店会
+  在第一次安装时自动弹窗。如果被跳过，请手动从应用商店装。）"
 fi
-if ! command -v npm >/dev/null 2>&1; then
-    die "未检测到 npm，请确认 nodejs_v22 安装完整"
+if [ ! -x "$NODEJS_PATH/node" ]; then
+    # 备用：直接 /var/apps 下找 nodejs_v22
+    FOUND_NODE=$(find /var/apps -maxdepth 3 -name node -type f -executable 2>/dev/null | grep nodejs | head -1)
+    if [ -z "$FOUND_NODE" ]; then
+        die "nodejs_v22 装在非标准路径，且 /var/apps 下找不到 node。请确认应用商店的 nodejs_v22 已装好。"
+    else
+        log "nodejs_v22 装在非标准路径: $FOUND_NODE（继续）"
+    fi
 fi
-log "node=$(node -v) npm=$(npm -v)"
+log "node=$(node -v)  npm=$(npm -v)"
 
 # 2. 架构
 ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
