@@ -1,0 +1,103 @@
+#!/bin/bash
+# Claude Code 沙箱 - cmd/main
+# 处理 start | stop | status | restart
+#
+# 沙箱：进程以包用户（run-as=package）身份运行 ttyd，chdir 到 $TRIM_PKGHOME/home/workspace
+#       Claude Code CLI 工作目录被限制在 WORKSPACE_DIR 之内
+set -u
+
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox.err}"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+APP_HOME="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+BIN_DIR="$APP_HOME/bin"
+ENV_FILE="${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env"
+PID_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/ttyd.pid"
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/ttyd.log"
+
+die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; echo "$*" >&2; exit 1; }
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+
+# === 状态检查 ===
+is_running() {
+    [ -f "$PID_FILE" ] || return 1
+    local pid; pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+start() {
+    if is_running; then
+        log "已在运行 (pid=$(cat "$PID_FILE"))"
+        return 0
+    fi
+
+    # 依赖
+    [ -x "$BIN_DIR/ttyd" ] || die "ttyd 不存在，请重新安装应用"
+    [ -x "$APP_HOME/node_modules/.bin/claude" ] || die "claude 未安装，请重新安装应用"
+
+    export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+    [ -r "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
+
+    : "${TTYD_PORT:=7681}"
+    : "${WORKSPACE_DIR:=$TRIM_PKGHOME/home/workspace}"
+    mkdir -p "$WORKSPACE_DIR"
+
+    # 用 runuser 切到包用户（root lifecycle 脚本的标准做法）
+    local runner=()
+    if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
+        runner=(runuser -u "$TRIM_USERNAME" --)
+    fi
+
+    # ttyd 鉴权参数
+    local cred=()
+    if [ -n "${TTYD_USER:-}" ]; then
+        cred+=(-c "${TTYD_USER}:${TTYD_PASSWORD:-}")
+    fi
+
+    # 关键：-w 指定工作目录，让 Claude Code 启动后默认在沙箱目录
+    # --user-agent-arg 防止 ttyd 兼容性问题
+    log "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_RUN_USERNAME:-?}"
+    "${runner[@]}" "$BIN_DIR/ttyd" \
+        -p "$TTYD_PORT" \
+        -W \
+        -a "${cred[0]:-}" \
+        -m 0 \
+        -t "titleFixed=Claude Code" \
+        -w "$WORKSPACE_DIR" \
+        bash >> "$LOG_FILE" 2>&1 &
+
+    echo $! > "$PID_FILE"
+    sleep 1
+    if ! is_running; then
+        die "ttyd 启动失败，请查看日志：$LOG_FILE"
+    fi
+    log "ttyd 启动成功 pid=$(cat "$PID_FILE")"
+}
+
+stop() {
+    if ! is_running; then
+        log "未运行"
+        rm -f "$PID_FILE"
+        return 0
+    fi
+    local pid; pid="$(cat "$PID_FILE")"
+    log "停止 ttyd pid=$pid"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$PID_FILE"
+}
+
+status() {
+    if is_running; then
+        return 0
+    fi
+    return 3
+}
+
+case "${1:-}" in
+    start)   start   ;;
+    stop)    stop    ;;
+    restart) stop; start ;;
+    status)  status  ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

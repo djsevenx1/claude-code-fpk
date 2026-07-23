@@ -1,0 +1,9 @@
+#!/bin/bash
+# Claude Code 沙箱 - config_init
+set -u
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.err}"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+
+# 改配置前先停服务
+[ -x /var/apps/claude-code-sandbox/cmd/main ] && /var/apps/claude-code-sandbox/cmd/main stop || true
+exit 0

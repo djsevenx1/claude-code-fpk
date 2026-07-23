@@ -1,0 +1,9 @@
+{
+  "shares": [
+    {
+      "name": "workspace",
+      "description": "Claude Code 沙箱工作目录（包用户可读写）",
+      "path": "${TRIM_PKGHOME}/home/workspace"
+    }
+  ]
+}

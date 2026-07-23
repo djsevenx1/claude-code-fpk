@@ -1,0 +1,49 @@
+#!/bin/bash
+# Claude Code 沙箱 - install_init
+# 安装前预检：验证 nodejs_v22 运行时可用、目标架构支持、ttyd 静态二进制可下载。
+set -u
+export PATH="/var/apps/nodejs_v22/target/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# 兜底：TRIM_TEMP_LOGFILE 在某些 fnOS 版本可能为空，写一个默认路径
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+exec 2>>"$TRIM_TEMP_LOGFILE"
+
+die() { echo "$*" >&2; echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+log() { echo "[$(date '+%H:%M:%S')] $*" >&2; }
+
+log "install_init: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
+
+# 1. nodejs_v22 运行时
+if ! command -v node >/dev/null 2>&1; then
+    die "未检测到 node 运行时，请先在应用商店安装 nodejs_v22"
+fi
+if ! command -v npm >/dev/null 2>&1; then
+    die "未检测到 npm，请确认 nodejs_v22 安装完整"
+fi
+log "node=$(node -v) npm=$(npm -v)"
+
+# 2. 架构
+ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
+case "$ARCH" in
+    x86_64)  log "架构 OK: x86_64" ;;
+    aarch64) log "架构 OK: aarch64 (但本包仅 platform=x86，不保证能装)" ;;
+    *) die "不支持的 CPU 架构: $ARCH（本包仅支持 x86_64）" ;;
+esac
+
+# 3. 网络可达性（不阻塞，给 install_callback 用）
+if command -v curl >/dev/null 2>&1; then
+    if curl -fsSI --max-time 10 https://github.com >/dev/null 2>&1; then
+        log "github.com 可达"
+    else
+        log "WARN: github.com 暂不可达，install_callback 阶段下载 ttyd 可能失败"
+    fi
+    if curl -fsSI --max-time 10 https://registry.npmmirror.com >/dev/null 2>&1; then
+        log "registry.npmmirror.com 可达"
+    else
+        log "WARN: npmmirror 暂不可达，install_callback 装 claude-code 可能失败"
+    fi
+fi
+
+log "install_init OK"
+exit 0

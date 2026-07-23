@@ -1,0 +1,197 @@
+#!/bin/bash
+# Claude Code 沙箱 - install_callback
+# 步骤：
+#   1) 下载 ttyd 静态二进制
+#   2) 用 npm 安装 Claude Code CLI（项目内安装，不污染全局）
+#   3) 写 .env（API Key 等，权限 600）
+#   4) 写 ~/.claude/settings.json + ~/.claude.json
+#   5) 初始化工作目录
+#
+# 关键修复（v1.1.0）：
+#   - trap ERR 在任何未捕获错误时向 TRIM_TEMP_LOGFILE 写入可读消息
+#   - 写日志前先确保 TRIM_TEMP_LOGFILE 父目录存在
+#   - 用 runuser 把 node_modules 属主切到包用户
+set -u
+
+# ============================================================
+# 0. 初始化：兜底所有可能缺失的环境变量
+# ============================================================
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" "$(dirname "$LOG_FILE")" 2>/dev/null || true
+exec 2>>"$LOG_FILE"
+
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+die() {
+    local msg="$1"
+    echo "$msg" > "$TRIM_TEMP_LOGFILE"
+    log "FATAL: $msg"
+    exit 1
+}
+
+# 关键 trap：任何 set -u 之外的未捕获错误都向 UI 写可读消息
+on_err() {
+    local rc=$?
+    local line=${BASH_LINENO[0]:-?}
+    local msg="install_callback 在第 ${line} 行失败（退出码 ${rc}）。请查看日志：${LOG_FILE}"
+    echo "$msg" > "$TRIM_TEMP_LOGFILE"
+    log "FATAL[$line, rc=$rc]: ${BASH_COMMAND}"
+    exit $rc
+}
+trap on_err ERR
+
+# ============================================================
+# 1. 校验环境变量
+# ============================================================
+: "${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
+: "${TRIM_PKGETC:?TRIM_PKGETC 未设置}"
+: "${TRIM_PKGVAR:?TRIM_PKGVAR 未设置}"
+: "${TRIM_PKGHOME:?TRIM_PKGHOME 未设置}"
+: "${TRIM_USERNAME:?TRIM_USERNAME 未设置}"
+: "${TRIM_GROUPNAME:?TRIM_GROUPNAME 未设置}"
+
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+command -v node >/dev/null 2>&1 || die "未找到 node，请先装 nodejs_v22 运行时"
+command -v npm  >/dev/null 2>&1 || die "未找到 npm，请确认 nodejs_v22 安装完整"
+
+APP_HOME="$TRIM_APPDEST"
+BIN_DIR="$APP_HOME/bin"
+ENV_FILE="$TRIM_PKGETC/claude.env"
+HOME_DIR="$TRIM_PKGHOME/home"
+WORKSPACE_DIR="$HOME_DIR/workspace"
+CLAUDE_HOME="$HOME_DIR/.claude"
+
+mkdir -p "$BIN_DIR" "$TRIM_PKGVAR" "$HOME_DIR" "$WORKSPACE_DIR" "$CLAUDE_HOME"
+
+log "install_callback 开始: APP_HOME=$APP_HOME  USER=$TRIM_USERNAME"
+
+# ============================================================
+# 2. 下载 ttyd
+# ============================================================
+TTYD_VERSION="1.7.7"
+ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
+case "$ARCH" in
+    x86_64)  TTYD_ARCH="x86_64"  ;;
+    aarch64) TTYD_ARCH="aarch64" ;;
+    *) die "不支持的 CPU 架构: $ARCH（本包仅 x86_64）" ;;
+esac
+
+if [ ! -x "$BIN_DIR/ttyd" ]; then
+    log "下载 ttyd ${TTYD_VERSION} (${TTYD_ARCH}) ..."
+    if ! curl -fsSL --max-time 90 \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
+        -o "$BIN_DIR/ttyd"; then
+        die "ttyd 下载失败，请检查 NAS 能否访问 github.com"
+    fi
+    chmod +x "$BIN_DIR/ttyd"
+    log "ttyd 安装完成"
+fi
+
+# ============================================================
+# 3. 安装 Claude Code（项目本地，不污染全局）
+# ============================================================
+NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+npm config set registry "$NPM_REGISTRY" >/dev/null 2>&1 || true
+
+# package.json（若不存在则创建，让 npm install 装在项目目录）
+if [ ! -f "$APP_HOME/package.json" ]; then
+    cat > "$APP_HOME/package.json" <<'JSON'
+{
+  "name": "claude-code-sandbox",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Claude Code 沙箱 for 飞牛 fnOS",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0"
+  }
+}
+JSON
+fi
+
+if [ ! -x "$APP_HOME/node_modules/.bin/claude" ]; then
+    log "安装 @anthropic-ai/claude-code（registry=$NPM_REGISTRY）..."
+    if ! (cd "$APP_HOME" && npm install --no-audit --no-fund --loglevel=error) >>"$LOG_FILE" 2>&1; then
+        die "Claude Code 安装失败，请查看日志：$LOG_FILE"
+    fi
+    log "Claude Code 安装完成"
+fi
+
+# 修正属主（npm install 跑在 root 下，但运行时是包用户）
+if [ "$(id -u)" = "0" ]; then
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$APP_HOME/node_modules" "$APP_HOME/package.json" "$APP_HOME/package-lock.json" 2>/dev/null || true
+fi
+
+# ============================================================
+# 4. 写 .env
+# ============================================================
+: > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
+write_kv() {
+    local k="$1" v="${2:-}"
+    [ -n "$v" ] || return 0
+    # 用 printf %q 安全转义
+    printf '%s=%q\n' "$k" "$v" >> "$ENV_FILE"
+}
+
+write_kv "TTYD_USER"            "${wizard_ttyd_user:-}"
+write_kv "TTYD_PASSWORD"        "${wizard_ttyd_password:-}"
+write_kv "TTYD_PORT"            "${wizard_service_port:-7681}"
+write_kv "ANTHROPIC_BASE_URL"   "${wizard_anthropic_base_url:-}"
+write_kv "ANTHROPIC_MODEL"      "${wizard_anthropic_model:-claude-sonnet-4-5}"
+write_kv "ANTHROPIC_API_KEY"    "${wizard_anthropic_api_key:-}"
+write_kv "ANTHROPIC_AUTH_TOKEN" "${wizard_anthropic_auth_token:-}"
+chmod 600 "$ENV_FILE"
+log "ENV 写入完成: $ENV_FILE"
+
+# ============================================================
+# 5. 写 ~/.claude/settings.json
+# ============================================================
+# 用 python3 生成 JSON（fnOS 系统自带）；python3 缺失时退化到手工拼接
+build_settings() {
+    local f="$ENV_FILE"
+    python3 - "$f" <<'PY' 2>/dev/null
+import json, sys, os, shlex
+env_path = sys.argv[1]
+env = {}
+if os.path.isfile(env_path):
+    with open(env_path) as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env[k.strip()] = shlex.split(v)[0] if v.strip() else ""
+keys = ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+out = {k: env[k] for k in keys if env.get(k)}
+if out:
+    print(json.dumps({"env": out, "hasCompletedOnboarding": True}, ensure_ascii=False))
+PY
+}
+
+SETTINGS_JSON="$(build_settings)"
+if [ -n "$SETTINGS_JSON" ] && [ "$SETTINGS_JSON" != "{}" ] && [ "$SETTINGS_JSON" != "null" ]; then
+    printf '%s\n' "$SETTINGS_JSON" > "$CLAUDE_HOME/settings.json"
+    chmod 600 "$CLAUDE_HOME/settings.json"
+    log "settings.json 写入完成"
+else
+    log "未配置 API Key，跳过 settings.json（用户可稍后 claude /login）"
+fi
+
+# ~/.claude.json（首次启动标记）
+if [ ! -f "$HOME_DIR/.claude.json" ]; then
+    printf '{"hasCompletedOnboarding": true}\n' > "$HOME_DIR/.claude.json"
+    chmod 600 "$HOME_DIR/.claude.json"
+fi
+
+# ============================================================
+# 6. 属主修正
+# ============================================================
+if [ "$(id -u)" = "0" ]; then
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
+        "$TRIM_PKGETC" "$TRIM_PKGVAR" "$TRIM_PKGHOME" "$BIN_DIR" 2>/dev/null || true
+fi
+
+log "install_callback 完成"
+trap - ERR
+exit 0

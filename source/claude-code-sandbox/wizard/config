@@ -1,0 +1,64 @@
+[
+  {
+    "stepTitle": "Web 终端",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_service_port",
+        "label": "Web 终端端口",
+        "initValue": "7681",
+        "rules": [
+          { "required": true, "message": "请输入端口号" },
+          { "pattern": "^[0-9]+$", "message": "端口只能是数字" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_ttyd_user",
+        "label": "Web 终端用户名",
+        "initValue": "admin",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_ttyd_password",
+        "label": "Web 终端密码",
+        "initValue": "",
+        "rules": []
+      }
+    ]
+  },
+  {
+    "stepTitle": "Anthropic 凭据",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_anthropic_base_url",
+        "label": "ANTHROPIC_BASE_URL",
+        "initValue": "",
+        "rules": []
+      },
+      {
+        "type": "text",
+        "field": "wizard_anthropic_model",
+        "label": "ANTHROPIC_MODEL",
+        "initValue": "claude-sonnet-4-5",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_anthropic_api_key",
+        "label": "ANTHROPIC_API_KEY",
+        "initValue": "",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_anthropic_auth_token",
+        "label": "ANTHROPIC_AUTH_TOKEN",
+        "initValue": "",
+        "rules": []
+      }
+    ]
+  }
+]

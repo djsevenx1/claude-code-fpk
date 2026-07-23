@@ -1,0 +1,8 @@
+#!/bin/bash
+# Claude Code 沙箱 - uninstall_callback
+# fnpack 1.2.3 build 强制要求此文件存在；卸载清理实际由 uninstall_init 完成
+# （因为 fnpack 1.2.3 不支持 wizard/uninstall，所以没有 wizard_purge_data 选项）
+set -u
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall.err}"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+exit 0

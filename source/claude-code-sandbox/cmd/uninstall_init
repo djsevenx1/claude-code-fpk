@@ -1,0 +1,32 @@
+#!/bin/bash
+# Claude Code 沙箱 - uninstall_init
+# 注：fnpack 1.2.3 build 时不识别 wizard/uninstall，所以我们没有单独的 uninstall_callback
+#     所有卸载清理工作放在 uninstall_init（fnOS 卸载前调用）
+set -u
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall.err}"
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+exec 2>>"$LOG_FILE"
+
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+trap 'echo "uninstall_init 在第 ${BASH_LINENO[0]} 行失败" > "$TRIM_TEMP_LOGFILE"' ERR
+
+# 1. 停服务
+[ -x /var/apps/claude-code-sandbox/cmd/main ] && /var/apps/claude-code-sandbox/cmd/main stop || true
+
+# 2. 安全删除 .env（API Key / Token 敏感）
+ENV_FILE="${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env"
+if [ -f "$ENV_FILE" ]; then
+    if command -v shred >/dev/null 2>&1; then
+        shred -u "$ENV_FILE" 2>/dev/null || rm -f "$ENV_FILE"
+    else
+        rm -f "$ENV_FILE"
+    fi
+    log "已安全删除 .env"
+fi
+
+# 3. 退出时由 fnOS 自动清理 target/etc/var/home 等目录
+log "uninstall_init 完成"
+trap - ERR
+exit 0

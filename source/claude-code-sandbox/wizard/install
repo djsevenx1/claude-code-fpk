@@ -1,0 +1,68 @@
+[
+  {
+    "stepTitle": "Web 终端",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_service_port",
+        "label": "Web 终端端口（默认 7681，建议修改）",
+        "initValue": "7681",
+        "rules": [
+          { "required": true, "message": "请输入端口号" },
+          { "pattern": "^[0-9]+$", "message": "端口只能是数字" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_ttyd_user",
+        "label": "Web 终端用户名（留空 = 不鉴权，仅本机可信网络使用）",
+        "initValue": "admin",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_ttyd_password",
+        "label": "Web 终端密码",
+        "initValue": "",
+        "rules": []
+      }
+    ]
+  },
+  {
+    "stepTitle": "Anthropic 凭据",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_anthropic_base_url",
+        "label": "ANTHROPIC_BASE_URL（代理或第三方网关；官方直连留空）",
+        "initValue": "",
+        "rules": []
+      },
+      {
+        "type": "text",
+        "field": "wizard_anthropic_model",
+        "label": "ANTHROPIC_MODEL（默认 claude-sonnet-4-5）",
+        "initValue": "claude-sonnet-4-5",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_anthropic_api_key",
+        "label": "ANTHROPIC_API_KEY（官方 Key 或第三方网关 Key）",
+        "initValue": "",
+        "rules": []
+      },
+      {
+        "type": "password",
+        "field": "wizard_anthropic_auth_token",
+        "label": "ANTHROPIC_AUTH_TOKEN（OAuth Token；与 API Key 二选一）",
+        "initValue": "",
+        "rules": []
+      },
+      {
+        "type": "tips",
+        "helpText": "API Key 与 Token 仅保存在 NAS 本地 /etc/claude-code-sandbox/claude.env，权限 600，卸载时安全删除。如果两个都留空，首次启动在终端里执行 claude /login 交互登录即可。"
+      }
+    ]
+  }
+]

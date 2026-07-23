@@ -1,0 +1,8 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "claude-code-sandbox",
+  "groupname": "claude-code-sandbox",
+  "join-groups": []
+}

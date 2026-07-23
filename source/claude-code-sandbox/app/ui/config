@@ -1,0 +1,16 @@
+{
+  ".url": {
+    "claude-code-sandbox.main": {
+      "title": "Claude Code 沙箱",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "${wizard_service_port}",
+      "url": "/",
+      "allUsers": true,
+      "control": {
+        "accessPerm": "editable"
+      }
+    }
+  }
+}

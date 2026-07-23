@@ -1,0 +1,72 @@
+#!/bin/bash
+# Claude Code 沙箱 - config_callback
+# 改配置后：用向导值重写 .env 与 settings.json，然后重启服务
+set -u
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.err}"
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" "$(dirname "$LOG_FILE")" 2>/dev/null || true
+exec 2>>"$LOG_FILE"
+
+die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; echo "$*" >&2; exit 1; }
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+trap 'echo "config_callback 在第 ${BASH_LINENO[0]} 行失败" > "$TRIM_TEMP_LOGFILE"' ERR
+
+: "${TRIM_PKGETC:?TRIM_PKGETC 未设置}"
+: "${TRIM_PKGHOME:?TRIM_PKGHOME 未设置}"
+
+ENV_FILE="$TRIM_PKGETC/claude.env"
+HOME_DIR="$TRIM_PKGHOME/home"
+CLAUDE_HOME="$HOME_DIR/.claude"
+
+: > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+write_kv() {
+    [ -n "${2:-}" ] || return 0
+    printf '%s=%q\n' "$1" "$2" >> "$ENV_FILE"
+}
+write_kv "TTYD_USER"            "${wizard_ttyd_user:-}"
+write_kv "TTYD_PASSWORD"        "${wizard_ttyd_password:-}"
+write_kv "TTYD_PORT"            "${wizard_service_port:-7681}"
+write_kv "ANTHROPIC_BASE_URL"   "${wizard_anthropic_base_url:-}"
+write_kv "ANTHROPIC_MODEL"      "${wizard_anthropic_model:-claude-sonnet-4-5}"
+write_kv "ANTHROPIC_API_KEY"    "${wizard_anthropic_api_key:-}"
+write_kv "ANTHROPIC_AUTH_TOKEN" "${wizard_anthropic_auth_token:-}"
+chmod 600 "$ENV_FILE"
+log ".env 已更新"
+
+# 重建 settings.json
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+SETTINGS_JSON="$(python3 - "$ENV_FILE" <<'PY' 2>/dev/null
+import json, sys, os, shlex
+env_path = sys.argv[1]
+env = {}
+if os.path.isfile(env_path):
+    with open(env_path) as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env[k.strip()] = shlex.split(v)[0] if v.strip() else ""
+keys = ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+out = {k: env[k] for k in keys if env.get(k)}
+if out:
+    print(json.dumps({"env": out, "hasCompletedOnboarding": True}, ensure_ascii=False))
+PY
+)"
+if [ -n "$SETTINGS_JSON" ] && [ "$SETTINGS_JSON" != "{}" ] && [ "$SETTINGS_JSON" != "null" ]; then
+    printf '%s\n' "$SETTINGS_JSON" > "$CLAUDE_HOME/settings.json"
+    chmod 600 "$CLAUDE_HOME/settings.json"
+    log "settings.json 已更新"
+fi
+
+# 修正属主
+if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$TRIM_PKGETC" "$CLAUDE_HOME" 2>/dev/null || true
+fi
+
+# 重启
+[ -x /var/apps/claude-code-sandbox/cmd/main ] && /var/apps/claude-code-sandbox/cmd/main start || true
+
+trap - ERR
+exit 0

@@ -1,0 +1,28 @@
+#!/bin/bash
+# Claude Code 沙箱 - upgrade_callback
+# 升级后：npm update 拉新版本 Claude Code
+set -u
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.err}"
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" "$(dirname "$LOG_FILE")" 2>/dev/null || true
+exec 2>>"$LOG_FILE"
+
+die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; echo "$*" >&2; exit 1; }
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+trap 'echo "upgrade_callback 在第 ${BASH_LINENO[0]} 行失败" > "$TRIM_TEMP_LOGFILE"' ERR
+
+: "${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+
+if [ -f "$TRIM_APPDEST/package.json" ]; then
+    log "升级 @anthropic-ai/claude-code ..."
+    (cd "$TRIM_APPDEST" && npm update --no-audit --no-fund --loglevel=error) >>"$LOG_FILE" 2>&1 \
+        || die "Claude Code 升级失败，请查看日志：$LOG_FILE"
+    log "升级完成"
+fi
+
+if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$TRIM_APPDEST/node_modules" 2>/dev/null || true
+fi
+trap - ERR
+exit 0

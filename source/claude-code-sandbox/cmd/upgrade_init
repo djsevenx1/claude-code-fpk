@@ -1,0 +1,12 @@
+#!/bin/bash
+# Claude Code 沙箱 - upgrade_init
+set -u
+TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.err}"
+mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+
+# 升级前停止服务
+if [ -x /var/apps/claude-code-sandbox/cmd/main ]; then
+    /var/apps/claude-code-sandbox/cmd/main stop || true
+fi
+exit 0
