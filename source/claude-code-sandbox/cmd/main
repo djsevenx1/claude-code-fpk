@@ -5,22 +5,28 @@
 # 沙箱：进程以包用户（run-as=package）身份运行 ttyd，chdir 到 $TRIM_PKGHOME/home/workspace
 #       Claude Code CLI 工作目录被限制在 WORKSPACE_DIR 之内
 #
-# 关键设计（v1.2.7，照 OpenClaw 写法改造）：
-#   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log（不再单独 ttyd.log）
+# 关键设计（v1.3.0）：
+#   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log
 #   - ttyd 鉴权 flag：必须用 -c（--credential），-a 是 --auth-bypass
 #   - nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
 #   - stop 时除了用 PID_FILE，还 pkill -f 兜底（学 OpenClaw uninstall_init）
-#     PID 文件丢了也能清理残留
+#   - v1.3.0 新增 Web 控制台（management-api.js），与 ttyd 同生命周期
+#     管理 API 仅监听 lo（127.0.0.1:7682），通过 fnOS 桌面 iframe 访问
+#     鉴权与 ttyd 共享 .env 中的 TTYD_USER/TTYD_PASSWORD
 
 # 引入共享日志
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
 [ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
 PID_FILE="${TRIM_PKGVAR}/ttyd.pid"
+MGMT_PID_FILE="${TRIM_PKGVAR}/management-api.pid"
 APP_HOME="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
 BIN_DIR="${APP_HOME}/bin"
+SERVER_DIR="${APP_HOME}/app/server"
 ENV_FILE="${TRIM_PKGETC:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/etc}/claude.env"
 WORKSPACE_DIR="${TRIM_PKGHOME:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/home}/home/workspace"
+
+: "${MANAGEMENT_PORT:=7682}"
 
 mkdir -p "$(dirname "${PID_FILE}")" "$WORKSPACE_DIR" 2>/dev/null || true
 
@@ -31,79 +37,169 @@ is_running() {
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-start() {
-    if is_running; then
-        log_msg "已在运行 (pid=$(cat "$PID_FILE"))"
+is_mgmt_running() {
+    [ -f "$MGMT_PID_FILE" ] || return 1
+    local pid; pid="$(cat "$MGMT_PID_FILE" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+start_management_api() {
+    if is_mgmt_running; then
+        log_msg "management-api 已在运行 (pid=$(cat "$MGMT_PID_FILE"))"
         return 0
     fi
-
-    # 依赖
-    if [ ! -x "$BIN_DIR/ttyd" ]; then
-        diag_to_user "启动失败" "ttyd 不存在：${BIN_DIR}/ttyd。请重装应用。"
-    fi
-    if [ ! -x "$APP_HOME/node_modules/.bin/claude" ]; then
-        diag_to_user "启动失败" "claude 未安装：${APP_HOME}/node_modules/.bin/claude。请重装应用。"
+    if [ ! -f "${SERVER_DIR}/management-api.js" ]; then
+        diag_to_user "启动失败" "management-api.js 不存在：${SERVER_DIR}/management-api.js。请重装应用。"
     fi
 
     # 引入 fnOS 商店的 Node.js v22
     export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+    command -v node >/dev/null 2>&1 || diag_to_user "启动失败" "找不到 node，请确认 nodejs_v22 装好了"
 
-    # 加载 .env
-    if [ -r "$ENV_FILE" ]; then
-        set -a
-        . "$ENV_FILE"
-        set +a
-    fi
+    # 把环境变量塞进去（让 management-api 知道路径）
+    export TRIM_APPDEST="${TRIM_APPDEST}"
+    export TRIM_PKGETC="${TRIM_PKGETC}"
+    export TRIM_PKGVAR="${TRIM_PKGVAR}"
+    export TRIM_PKGHOME="${TRIM_PKGHOME}"
+    export TRIM_USERNAME="${TRIM_USERNAME}"
+    export MANAGEMENT_PORT="${MANAGEMENT_PORT}"
 
-    : "${TTYD_PORT:=7681}"
+    # 兜底清理残留
+    pkill -f "management-api.js" 2>/dev/null || true
+    sleep 0.3
 
-    # 用 runuser 切到包用户（root lifecycle 脚本的标准做法）
     local runner=()
     if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
         runner=(runuser -u "$TRIM_USERNAME" --)
     fi
 
-    # ttyd 鉴权参数：必须用 -c（--credential），-a 是 --auth-bypass
-    local cred_args=()
-    if [ -n "${TTYD_USER:-}" ] && [ -n "${TTYD_PASSWORD:-}" ]; then
-        cred_args=(-c "${TTYD_USER}:${TTYD_PASSWORD}")
-    elif [ -n "${TTYD_USER:-}" ]; then
-        cred_args=(-c "${TTYD_USER}:")
-    fi
-
-    log_msg "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_USERNAME:-?} cred=${TTYD_USER:-<none>}"
-
-    # 启动前先 pkill 兜底清理可能残留的同名进程（学 OpenClaw）
-    pkill -f "${BIN_DIR}/ttyd" 2>/dev/null || true
-    sleep 0.5
-
-    # nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
-    nohup "${runner[@]}" "$BIN_DIR/ttyd" \
-        -p "$TTYD_PORT" \
-        -W \
-        -i lo \
-        -m 0 \
-        "${cred_args[@]}" \
-        -t "titleFixed=Claude Code" \
-        -w "$WORKSPACE_DIR" \
-        bash >> "${LOG_FILE}" 2>&1 &
-
+    nohup "${runner[@]}" node "${SERVER_DIR}/management-api.js" >> "${LOG_FILE}" 2>&1 &
     local pid=$!
-    echo "$pid" > "$PID_FILE"
+    echo "$pid" > "$MGMT_PID_FILE"
 
-    # 等待 ttyd 端口就绪
+    # 等端口就绪（最多 5s）
     local i
     for i in 1 2 3 4 5 6 7 8 9 10; do
         sleep 0.5
-        if kill -0 "$pid" 2>/dev/null; then
-            log_msg "ttyd 启动成功 pid=$pid"
+        if ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$MGMT_PID_FILE"
+            diag_to_user "启动失败" "management-api 启动后立即退出 (pid=$pid)。请看日志：${LOG_FILE}"
+        fi
+        if command -v ss >/dev/null 2>&1; then
+            if ss -ltn 2>/dev/null | grep -q "127.0.0.1:${MANAGEMENT_PORT}"; then
+                log_msg "management-api 启动成功 pid=$pid port=${MANAGEMENT_PORT}"
+                return 0
+            fi
+        elif command -v nc >/dev/null 2>&1; then
+            if nc -z 127.0.0.1 "${MANAGEMENT_PORT}" 2>/dev/null; then
+                log_msg "management-api 启动成功 pid=$pid port=${MANAGEMENT_PORT}"
+                return 0
+            fi
+        else
+            # 没探测工具就直接信 PID
+            log_msg "management-api 启动成功 pid=$pid (无端口探测工具)"
             return 0
         fi
     done
-    diag_to_user "启动失败" "ttyd 启动后未保持运行 (pid=$pid)。请看完整日志：${LOG_FILE}"
+    log_msg "WARN: management-api 端口 ${MANAGEMENT_PORT} 5s 内未就绪，请看日志"
+    return 0
+}
+
+stop_management_api() {
+    if ! is_mgmt_running; then
+        rm -f "$MGMT_PID_FILE"
+        pkill -f "management-api.js" 2>/dev/null && log_msg "pkill 清理了残留 management-api" || true
+        return 0
+    fi
+    local pid; pid="$(cat "$MGMT_PID_FILE")"
+    log_msg "停止 management-api pid=$pid"
+    kill "$pid" 2>/dev/null || true
+    sleep 0.5
+    kill -9 "$pid" 2>/dev/null || true
+    rm -f "$MGMT_PID_FILE"
+    pkill -f "management-api.js" 2>/dev/null && log_msg "pkill 兜底清理 management-api" || true
+    log_msg "management-api 已停止"
+}
+
+start() {
+    if is_running; then
+        log_msg "已在运行 (pid=$(cat "$PID_FILE"))"
+    else
+        # 依赖
+        if [ ! -x "$BIN_DIR/ttyd" ]; then
+            diag_to_user "启动失败" "ttyd 不存在：${BIN_DIR}/ttyd。请重装应用。"
+        fi
+        if [ ! -x "$APP_HOME/node_modules/.bin/claude" ]; then
+            diag_to_user "启动失败" "claude 未安装：${APP_HOME}/node_modules/.bin/claude。请重装应用。"
+        fi
+
+        # 引入 fnOS 商店的 Node.js v22
+        export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
+
+        # 加载 .env
+        if [ -r "$ENV_FILE" ]; then
+            set -a
+            . "$ENV_FILE"
+            set +a
+        fi
+
+        : "${TTYD_PORT:=7681}"
+
+        # 用 runuser 切到包用户（root lifecycle 脚本的标准做法）
+        local runner=()
+        if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
+            runner=(runuser -u "$TRIM_USERNAME" --)
+        fi
+
+        # ttyd 鉴权参数：必须用 -c（--credential），-a 是 --auth-bypass
+        local cred_args=()
+        if [ -n "${TTYD_USER:-}" ] && [ -n "${TTYD_PASSWORD:-}" ]; then
+            cred_args=(-c "${TTYD_USER}:${TTYD_PASSWORD}")
+        elif [ -n "${TTYD_USER:-}" ]; then
+            cred_args=(-c "${TTYD_USER}:")
+        fi
+
+        log_msg "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_USERNAME:-?} cred=${TTYD_USER:-<none>}"
+
+        # 启动前先 pkill 兜底清理可能残留的同名进程（学 OpenClaw）
+        pkill -f "${BIN_DIR}/ttyd" 2>/dev/null || true
+        sleep 0.5
+
+        # nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
+        nohup "${runner[@]}" "$BIN_DIR/ttyd" \
+            -p "$TTYD_PORT" \
+            -W \
+            -i lo \
+            -m 0 \
+            "${cred_args[@]}" \
+            -t "titleFixed=Claude Code" \
+            -w "$WORKSPACE_DIR" \
+            bash >> "${LOG_FILE}" 2>&1 &
+
+        local pid=$!
+        echo "$pid" > "$PID_FILE"
+
+        # 等待 ttyd 端口就绪
+        local i
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 0.5
+            if kill -0 "$pid" 2>/dev/null; then
+                log_msg "ttyd 启动成功 pid=$pid"
+                break
+            fi
+            if [ "$i" = "10" ]; then
+                diag_to_user "启动失败" "ttyd 启动后未保持运行 (pid=$pid)。请看完整日志：${LOG_FILE}"
+            fi
+        done
+    fi
+
+    # 不管 ttyd 是已经运行还是刚启动，management-api 都跟着起来
+    start_management_api
 }
 
 stop() {
+    # 先停 management-api（它依赖 .env，但 stop 不需要它）
+    stop_management_api
     if ! is_running; then
         log_msg "未运行（PID_FILE 不存在或进程已退出）"
         rm -f "$PID_FILE"
@@ -123,6 +219,7 @@ stop() {
 }
 
 status() {
+    # 状态：ttyd 在跑就算 running（management-api 是辅助）
     if is_running; then
         return 0
     fi

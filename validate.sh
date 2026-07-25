@@ -21,6 +21,7 @@ for p in manifest ICON.PNG ICON_256.PNG \
          cmd/lib/log.sh \
          config/privilege config/resource \
          app/ui/config app/ui/images/icon_64.png app/ui/images/icon_256.png \
+         app/ui/management.html app/server/management-api.js \
          wizard/install wizard/config; do
     [ -e "$SRC/$p" ] && check true "$p 存在" || check false "$p 缺失"
 done
@@ -29,6 +30,15 @@ echo "=== 2. JSON 合法 ==="
 for f in $SRC/config/privilege $SRC/config/resource $SRC/app/ui/config $SRC/wizard/install $SRC/wizard/config; do
     [ -f "$f" ] && python3 -c "import json; json.load(open('$f'))" 2>/dev/null && check true "$f 合法 JSON" || check false "$f JSON 错"
 done
+
+echo "=== 2b. JS 语法 (node --check) ==="
+if command -v node >/dev/null 2>&1; then
+    for f in "$SRC/app/server/management-api.js"; do
+        [ -f "$f" ] && node --check "$f" 2>/dev/null && check true "$f node --check OK" || check false "$f JS 语法错"
+    done
+else
+    echo "  ⚠️  node 不在 PATH，跳过 JS 语法检查（不影响打包）"
+fi
 
 echo "=== 3. shell 脚本无语法错 ==="
 # lib/ 子目录里的共享脚本
@@ -61,6 +71,8 @@ chk("$SRC/ICON.PNG", 64, 64)
 chk("$SRC/ICON_256.PNG", 256, 256)
 chk("$SRC/app/ui/images/icon_64.png", 64, 64)
 chk("$SRC/app/ui/images/icon_256.png", 256, 256)
+chk("$SRC/app/ui/images/icon_console_64.png", 64, 64)
+chk("$SRC/app/ui/images/icon_console_256.png", 256, 256)
 PY
 [ $? -eq 0 ] && ok=$((ok+1)) || fail=$((fail+1))
 

@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Claude Code · 控制台</title>
+<style>
+:root {
+    --bg:        #18182F;
+    --bg-2:      #1F1F3D;
+    --bg-3:      #272748;
+    --line:      #33335C;
+    --text:      #E8E8F0;
+    --text-2:    #9A9AB8;
+    --text-3:    #6B6B8C;
+    --coral:     #D97757;
+    --coral-2:   #E89478;
+    --green:     #5DD39E;
+    --yellow:    #F4C062;
+    --red:       #E06C75;
+    --blue:      #7AB8FF;
+    --radius:    10px;
+    --shadow:    0 4px 20px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+}
+a { color: var(--coral-2); text-decoration: none; }
+
+/* 顶部 */
+header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 24px;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-icon {
+    width: 36px; height: 36px;
+    background: var(--coral);
+    -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2 L13.5 9 L20 10 L14.5 13.5 L16 20 L12 16 L8 20 L9.5 13.5 L4 10 L10.5 9 Z'/></svg>") center/70% no-repeat;
+            mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2 L13.5 9 L20 10 L14.5 13.5 L16 20 L12 16 L8 20 L9.5 13.5 L4 10 L10.5 9 Z'/></svg>") center/70% no-repeat;
+}
+.brand h1 {
+    margin: 0; font-size: 18px; font-weight: 600;
+    letter-spacing: .3px;
+}
+.brand h1 small {
+    color: var(--text-3); font-weight: 400; margin-left: 8px; font-size: 12px;
+}
+.tabs { display: flex; gap: 4px; margin-left: 24px; flex: 1; }
+.tab {
+    background: transparent; color: var(--text-2); border: 0;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    font: inherit; font-weight: 500;
+}
+.tab:hover { color: var(--text); background: var(--bg-3); }
+.tab.active { color: var(--coral); background: var(--bg-3); }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px;
+    background: var(--bg-3); font-size: 12px; color: var(--text-2);
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.dot.stopped { background: var(--red); }
+.btn-refresh {
+    background: var(--bg-3); color: var(--text); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 12px;
+}
+.btn-refresh:hover { background: var(--line); }
+
+/* 内容 */
+main { padding: 24px; max-width: 1280px; margin: 0 auto; }
+.section { display: none; }
+.section.active { display: block; }
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+}
+.card {
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: var(--shadow);
+}
+.card h3 {
+    margin: 0 0 10px 0; font-size: 12px; font-weight: 500;
+    color: var(--text-3); text-transform: uppercase; letter-spacing: .8px;
+}
+.card .value {
+    font-size: 22px; font-weight: 600; color: var(--text);
+    word-break: break-all;
+}
+.card .sub { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+
+/* 控件 */
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn {
+    background: var(--coral); color: #fff; border: 0;
+    padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    font: inherit; font-weight: 500;
+    transition: filter .15s;
+}
+.btn:hover:not(:disabled) { filter: brightness(1.1); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.secondary { background: var(--bg-3); color: var(--text); border: 1px solid var(--line); }
+.btn.danger { background: var(--red); }
+.btn.success { background: var(--green); color: #0d2f1f; }
+.btn.sm { padding: 5px 10px; font-size: 12px; }
+
+/* 表单 */
+.form { display: grid; gap: 12px; max-width: 720px; }
+.field { display: grid; gap: 6px; }
+.field label {
+    font-size: 12px; color: var(--text-2); font-weight: 500;
+}
+.field .hint { font-size: 11px; color: var(--text-3); }
+.field input, .field select {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; font: inherit;
+}
+.field input:focus { outline: none; border-color: var(--coral); }
+.field .row-inline { display: flex; gap: 8px; align-items: center; }
+.field .row-inline input { flex: 1; }
+
+/* 日志 */
+.log-box {
+    background: #0E0E1F; border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 14px;
+    font-family: ui-monospace, "SF Mono", Consolas, "Courier New", monospace;
+    font-size: 12px; line-height: 1.55;
+    color: #C8C8E0;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 60vh; overflow-y: auto;
+}
+.log-line { padding: 0; margin: 0; }
+.log-meta { color: var(--text-3); margin-bottom: 10px; font-family: inherit; font-size: 12px; }
+
+/* 表格 */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td {
+    text-align: left; padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+}
+th { color: var(--text-3); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+td { color: var(--text); }
+td.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
+/* 提示 */
+.toast {
+    position: fixed; right: 24px; bottom: 24px;
+    background: var(--bg-2); color: var(--text);
+    border: 1px solid var(--line); border-left: 4px solid var(--coral);
+    padding: 12px 18px; border-radius: 8px; box-shadow: var(--shadow);
+    min-width: 240px; max-width: 420px;
+    opacity: 0; transform: translateY(20px); transition: all .25s;
+    pointer-events: none; z-index: 100;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.error { border-left-color: var(--red); }
+.toast.success { border-left-color: var(--green); }
+
+.badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 500;
+}
+.badge.ok    { background: rgba(93,211,158,.15); color: var(--green); }
+.badge.warn  { background: rgba(244,192,98,.15); color: var(--yellow); }
+.badge.err   { background: rgba(224,108,117,.15); color: var(--red); }
+.badge.muted { background: var(--bg-3); color: var(--text-3); }
+
+.help {
+    background: var(--bg-3); border-radius: 8px; padding: 12px 14px;
+    font-size: 12px; color: var(--text-2); margin-bottom: 16px;
+    border-left: 3px solid var(--coral);
+}
+
+@media (max-width: 640px) {
+    header { flex-wrap: wrap; }
+    .tabs { margin-left: 0; width: 100%; order: 2; overflow-x: auto; }
+    main { padding: 16px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+    <div class="brand">
+        <div class="brand-icon"></div>
+        <h1>Claude Code 控制台 <small>v1.3.0</small></h1>
+    </div>
+    <nav class="tabs">
+        <button class="tab active" data-tab="overview">概览</button>
+        <button class="tab" data-tab="config">配置</button>
+        <button class="tab" data-tab="logs">日志</button>
+        <button class="tab" data-tab="processes">进程 / 存储</button>
+    </nav>
+    <div class="header-right">
+        <span class="status-pill"><span class="dot" id="dot"></span><span id="statusText">检查中…</span></span>
+        <button class="btn-refresh" id="btnRefresh">刷新</button>
+    </div>
+</header>
+
+<main>
+
+<!-- 概览 -->
+<section class="section active" id="tab-overview">
+    <div class="help">
+        这是一个轻量级 Web 控制台（端口 7682，仅本机 loopback），与 Web 终端（ttyd 7681）独立。
+        你可以在这里看状态、改配置、查日志、启停服务；底层走的是 <code>cmd/main</code>，安全。
+    </div>
+    <div class="grid">
+        <div class="card">
+            <h3>ttyd Web 终端</h3>
+            <div class="value" id="cvTtyd">—</div>
+            <div class="sub" id="cvTtydSub"></div>
+        </div>
+        <div class="card">
+            <h3>Claude Code 版本</h3>
+            <div class="value" id="cvClaude">—</div>
+            <div class="sub" id="cvClaudeSub"></div>
+        </div>
+        <div class="card">
+            <h3>运行时长</h3>
+            <div class="value" id="cvUptime">—</div>
+            <div class="sub id="cvUptimeSub"></div>
+        </div>
+        <div class="card">
+            <h3>API 凭据</h3>
+            <div class="value" id="cvCreds">—</div>
+            <div class="sub" id="cvCredsSub"></div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+        <h3>服务控制</h3>
+        <div class="row" style="margin-top:10px">
+            <button class="btn success" data-action="start">▶ 启动</button>
+            <button class="btn secondary" data-action="restart">↻ 重启</button>
+            <button class="btn danger" data-action="stop">■ 停止</button>
+            <a class="btn secondary" id="openTerminal" target="_blank" href="#">打开 Web 终端 →</a>
+        </div>
+        <div class="hint" style="color:var(--text-3); font-size:12px; margin-top:10px">
+            启动/停止/重启走 <code>cmd/main</code>；改完配置点重启生效。
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>系统信息</h3>
+        <table style="margin-top:8px">
+            <tr><th>架构</th><td class="mono" id="sysArch">—</td></tr>
+            <tr><th>Node.js</th><td class="mono" id="sysNode">—</td></tr>
+            <tr><th>主机</th><td class="mono" id="sysHost">—</td></tr>
+            <tr><th>负载 (1/5/15m)</th><td class="mono" id="sysLoad">—</td></tr>
+            <tr><th>日志路径</th><td class="mono" id="sysLog">—</td></tr>
+        </table>
+    </div>
+</section>
+
+<!-- 配置 -->
+<section class="section" id="tab-config">
+    <div class="help">
+        改完点保存 → 重启 ttyd 生效。敏感字段（密码、Token、Key）已遮罩展示；
+        留空表示不改原值；想清空某字段输入 <code>__CLEAR__</code>。
+    </div>
+    <form class="form" id="configForm" onsubmit="return false">
+        <div class="field">
+            <label>Web 终端端口 (TTYD_PORT)</label>
+            <input type="number" name="TTYD_PORT" min="1" max="65535" placeholder="7681">
+        </div>
+        <div class="field">
+            <label>Web 终端用户名 (TTYD_USER)</label>
+            <input type="text" name="TTYD_USER" placeholder="admin">
+            <div class="hint">留空 = 不鉴权（仅本机可信网络使用）</div>
+        </div>
+        <div class="field">
+            <label>Web 终端密码 (TTYD_PASSWORD)</label>
+            <div class="row-inline">
+                <input type="password" name="TTYD_PASSWORD" placeholder="不变留空">
+                <button type="button" class="btn sm secondary" data-toggle-pw>显示</button>
+            </div>
+            <div class="hint">修改后管理控制台也会用新密码鉴权</div>
+        </div>
+
+        <div class="field">
+            <label>ANTHROPIC_BASE_URL</label>
+            <input type="text" name="ANTHROPIC_BASE_URL" placeholder="官方直连留空；自建网关填 https://...">
+        </div>
+        <div class="field">
+            <label>ANTHROPIC_MODEL</label>
+            <input type="text" name="ANTHROPIC_MODEL" placeholder="claude-sonnet-4-5">
+        </div>
+        <div class="field">
+            <label>ANTHROPIC_API_KEY</label>
+            <div class="row-inline">
+                <input type="password" name="ANTHROPIC_API_KEY" placeholder="不变留空">
+                <button type="button" class="btn sm secondary" data-toggle-pw>显示</button>
+            </div>
+        </div>
+        <div class="field">
+            <label>ANTHROPIC_AUTH_TOKEN（OAuth）</label>
+            <div class="row-inline">
+                <input type="password" name="ANTHROPIC_AUTH_TOKEN" placeholder="不变留空">
+                <button type="button" class="btn sm secondary" data-toggle-pw>显示</button>
+            </div>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+            <button class="btn" id="btnSaveConfig">保存配置</button>
+            <button class="btn secondary" id="btnSaveRestart">保存并重启 ttyd</button>
+            <button class="btn secondary" id="btnReloadConfig">重新加载</button>
+        </div>
+    </form>
+</section>
+
+<!-- 日志 -->
+<section class="section" id="tab-logs">
+    <div class="row" style="margin-bottom:12px; align-items:center">
+        <span style="color:var(--text-2)">查看最近</span>
+        <select id="logLines" class="btn secondary" style="background:var(--bg-3); border:1px solid var(--line); color:var(--text); padding:6px 10px; border-radius:8px">
+            <option value="100">100 行</option>
+            <option value="300" selected>300 行</option>
+            <option value="1000">1000 行</option>
+            <option value="2000">2000 行</option>
+        </select>
+        <button class="btn-refresh" id="btnLoadLogs">加载</button>
+        <button class="btn-refresh" id="btnAutoLogs">自动刷新：关</button>
+        <span class="hint" style="color:var(--text-3); font-size:12px; margin-left:auto" id="logMeta"></span>
+    </div>
+    <div class="log-box" id="logBox">（暂无日志，点"加载"或"自动刷新：开"）</div>
+</section>
+
+<!-- 进程 / 存储 -->
+<section class="section" id="tab-processes">
+    <div class="card" style="margin-bottom:16px">
+        <h3>相关进程（ttyd / claude / management-api）</h3>
+        <pre class="log-box" id="procBox" style="margin-top:10px; max-height:300px">（点击下方加载）</pre>
+        <div class="row" style="margin-top:10px">
+            <button class="btn-refresh" id="btnLoadProcs">加载进程</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>磁盘占用</h3>
+        <table style="margin-top:10px" id="diskTable">
+            <thead><tr><th>目录</th><th>路径</th><th>大小</th></tr></thead>
+            <tbody><tr><td colspan="3" style="color:var(--text-3)">（点击下方加载）</td></tr></tbody>
+        </table>
+        <div class="row" style="margin-top:10px">
+            <button class="btn-refresh" id="btnLoadDisk">加载存储</button>
+        </div>
+    </div>
+</section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+'use strict';
+
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+// ----- Toast -----
+let toastT;
+function toast(msg, type) {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.className = 'toast show' + (type ? ' ' + type : '');
+    clearTimeout(toastT);
+    toastT = setTimeout(() => { el.className = 'toast'; }, 3500);
+}
+
+// ----- Tabs -----
+$$('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+        $$('.tab').forEach(x => x.classList.remove('active'));
+        $$('.section').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        $('#tab-' + t.dataset.tab).classList.add('active');
+        if (t.dataset.tab === 'logs')      loadLogs();
+        if (t.dataset.tab === 'processes') { loadProcs(); loadDisk(); }
+        if (t.dataset.tab === 'config')    loadConfig();
+    });
+});
+
+// ----- API 封装 -----
+async function api(method, path, body) {
+    const opt = { method, headers: {} };
+    if (body !== undefined) {
+        opt.headers['Content-Type'] = 'application/json';
+        opt.body = JSON.stringify(body);
+    }
+    let r;
+    try { r = await fetch(path, opt); }
+    catch (e) { throw new Error('网络错误: ' + e.message); }
+    if (r.status === 401) {
+        // 重新输密码
+        document.body.style.display = 'none';
+        location.reload();
+        throw new Error('未授权');
+    }
+    let data = null;
+    try { data = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+    return data;
+}
+
+// ----- 概览 -----
+let currentStatus = null;
+async function loadStatus() {
+    try {
+        const s = await api('GET', '/api/status');
+        currentStatus = s;
+        renderStatus(s);
+    } catch (e) {
+        $('#statusText').textContent = 'API 不可用';
+        $('#dot').className = 'dot stopped';
+    }
+}
+
+function renderStatus(s) {
+    const t = s.ttyd;
+    $('#dot').className = 'dot ' + (t.running ? 'running' : 'stopped');
+    $('#statusText').textContent = t.running ? ('ttyd 运行中 · :' + t.port) : 'ttyd 未运行';
+
+    $('#cvTtyd').innerHTML = t.running
+        ? '<span class="badge ok">RUNNING</span>'
+        : '<span class="badge err">STOPPED</span>';
+    $('#cvTtydSub').textContent = t.running
+        ? ('PID ' + t.pid + ' · 端口 ' + t.port + ' · 启动 ' + (t.startedAt || '').slice(11, 19))
+        : '点上方"启动"或在桌面重启应用';
+
+    $('#cvClaude').textContent = s.version || '未检测到';
+    $('#cvClaudeSub').textContent = s.version ? 'Claude Code CLI' : '请重装应用';
+
+    $('#cvUptime').textContent = t.uptimeHuman || '0s';
+    $('#cvUptimeSub').textContent = '进程 ' + s.app.uptimeSeconds + 's / API ' + s.app.uptimeSeconds + 's';
+
+    const cred = s.config;
+    const has = (cred.hasApiKey ? 1 : 0) + (cred.hasAuthToken ? 1 : 0);
+    $('#cvCreds').innerHTML = has
+        ? '<span class="badge ok">' + has + ' 项已配置</span>'
+        : '<span class="badge warn">未配置</span>';
+    $('#cvCredsSub').textContent = 'base=' + (cred.baseUrl || '官方直连') + ' · model=' + cred.model;
+
+    $('#sysArch').textContent  = s.app.arch + ' / ' + s.app.platform;
+    $('#sysNode').textContent  = s.app.nodeVersion;
+    $('#sysHost').textContent  = s.app.hostname;
+    $('#sysLoad').textContent  = s.app.loadavg.map(x => x.toFixed(2)).join(' / ');
+    $('#sysLog').textContent   = s.paths.LOG_FILE;
+
+    // 终端入口 href
+    const term = $('#openTerminal');
+    term.href = 'http://' + location.hostname + ':' + t.port + '/';
+}
+
+// ----- 控制按钮 -----
+$$('button[data-action]').forEach(b => {
+    b.addEventListener('click', async () => {
+        const action = b.dataset.action;
+        b.disabled = true;
+        const orig = b.textContent;
+        b.textContent = '…';
+        try {
+            const r = await api('POST', '/api/' + action);
+            toast(action + ' 成功', 'success');
+            await loadStatus();
+        } catch (e) {
+            toast(action + ' 失败: ' + e.message, 'error');
+        } finally {
+            b.disabled = false;
+            b.textContent = orig;
+        }
+    });
+});
+
+// ----- 配置 -----
+async function loadConfig() {
+    try {
+        const r = await api('GET', '/api/config');
+        const c = r.config;
+        const form = $('#configForm');
+        for (const k of Object.keys(c)) {
+            const el = form.elements[k];
+            if (!el) continue;
+            el.value = c[k] || '';
+        }
+    } catch (e) {
+        toast('加载配置失败: ' + e.message, 'error');
+    }
+}
+
+async function saveConfig(thenRestart) {
+    const form = $('#configForm');
+    const body = {};
+    for (const el of form.elements) {
+        if (!el.name) continue;
+        body[el.name] = el.value;
+    }
+    try {
+        await api('POST', '/api/config', body);
+        toast('配置已保存', 'success');
+        if (thenRestart) {
+            await api('POST', '/api/restart');
+            toast('配置已保存并重启', 'success');
+            await loadStatus();
+        } else {
+            // 重新加载以反映遮罩值
+            await loadConfig();
+        }
+    } catch (e) {
+        toast('保存失败: ' + e.message, 'error');
+    }
+}
+$('#btnSaveConfig').addEventListener('click', () => saveConfig(false));
+$('#btnSaveRestart').addEventListener('click', () => saveConfig(true));
+$('#btnReloadConfig').addEventListener('click', loadConfig);
+
+// 密码可见切换
+$$('button[data-toggle-pw]').forEach(b => {
+    b.addEventListener('click', () => {
+        const inp = b.parentElement.querySelector('input');
+        if (inp.type === 'password') { inp.type = 'text'; b.textContent = '隐藏'; }
+        else                          { inp.type = 'password'; b.textContent = '显示'; }
+    });
+});
+
+// ----- 日志 -----
+let autoLogT = null;
+async function loadLogs() {
+    const n = parseInt($('#logLines').value, 10) || 300;
+    try {
+        const r = await api('GET', '/api/logs?lines=' + n);
+        const box = $('#logBox');
+        if (!r.lines || !r.lines.length) { box.textContent = '（info.log 为空）'; }
+        else {
+            box.textContent = r.lines.join('\n');
+            // 自动滚到底
+            box.scrollTop = box.scrollHeight;
+        }
+        $('#logMeta').textContent = '共 ' + r.total + ' 行，显示末尾 ' + r.lines.length + ' 行 · ' + r.logFile;
+    } catch (e) {
+        toast('加载日志失败: ' + e.message, 'error');
+    }
+}
+$('#btnLoadLogs').addEventListener('click', loadLogs);
+$('#btnAutoLogs').addEventListener('click', () => {
+    if (autoLogT) {
+        clearInterval(autoLogT); autoLogT = null;
+        $('#btnAutoLogs').textContent = '自动刷新：关';
+    } else {
+        autoLogT = setInterval(loadLogs, 5000);
+        $('#btnAutoLogs').textContent = '自动刷新：开 (5s)';
+        loadLogs();
+    }
+});
+
+// ----- 进程 / 存储 -----
+async function loadProcs() {
+    try {
+        const r = await fetch('/api/processes');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const txt = await r.text();
+        $('#procBox').textContent = txt || '（无相关进程）';
+    } catch (e) {
+        toast('加载进程失败: ' + e.message, 'error');
+    }
+}
+$('#btnLoadProcs').addEventListener('click', loadProcs);
+
+async function loadDisk() {
+    try {
+        const r = await api('GET', '/api/disk');
+        const tb = $('#diskTable tbody');
+        tb.innerHTML = '';
+        for (const it of r.items) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + escapeHtml(it.name) + '</td>'
+                         + '<td class="mono">' + escapeHtml(it.path) + '</td>'
+                         + '<td class="mono">' + escapeHtml(it.size) + '</td>';
+            tb.appendChild(tr);
+        }
+    } catch (e) {
+        toast('加载存储失败: ' + e.message, 'error');
+    }
+}
+$('#btnLoadDisk').addEventListener('click', loadDisk);
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+    }[c]));
+}
+
+// ----- 刷新 -----
+$('#btnRefresh').addEventListener('click', () => {
+    loadStatus();
+    const active = $$('.tab').find(t => t.classList.contains('active'));
+    if (active && active.dataset.tab === 'logs')      loadLogs();
+    if (active && active.dataset.tab === 'processes') { loadProcs(); loadDisk(); }
+});
+
+// ----- 启动 -----
+loadStatus();
+loadConfig();
+// 状态每 10s 静默刷新
+setInterval(() => { if (!document.hidden) loadStatus(); }, 10000);
+
+})();
+</script>
+</body>
+</html>

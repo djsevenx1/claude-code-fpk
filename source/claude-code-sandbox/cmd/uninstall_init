@@ -2,18 +2,21 @@
 # Claude Code 沙箱 - uninstall_init
 # 卸载前：停服务 + 安全删除 .env（API Key）
 #
-# 关键设计（v1.2.6）：用 cmd/lib/log.sh 统一日志 + pkill 兜底清理（学 OpenClaw）
+# 关键设计（v1.3.0）：用 cmd/lib/log.sh 统一日志 + pkill 兜底清理（学 OpenClaw）
+#   - v1.3.0 加 pkill 清理 management-api 残留
 
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
 [ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
 log_msg "=== uninstall_init 开始 ==="
 
-# 1. pkill 兜底清理 ttyd 残留（学 OpenClaw uninstall_init）
+# 1. pkill 兜底清理 ttyd / management-api 残留（学 OpenClaw uninstall_init）
 APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
 BIN_DIR="${APP_DEST}/bin"
-pkill -f "${BIN_DIR}/ttyd" 2>/dev/null && log_msg "pkill 清理了残留 ttyd 进程" || true
-pkill -f "claude-code-sandbox" 2>/dev/null && log_msg "pkill 清理了残留 claude 进程" || true
+pkill -f "${BIN_DIR}/ttyd"        2>/dev/null && log_msg "pkill 清理了残留 ttyd 进程" || true
+pkill -f "management-api.js"      2>/dev/null && log_msg "pkill 清理了残留 management-api 进程" || true
+pkill -f "claude-code-sandbox"    2>/dev/null && log_msg "pkill 清理了残留 claude 进程" || true
+rm -f "${TRIM_PKGVAR:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/var}/management-api.pid" 2>/dev/null || true
 
 # 2. 走标准 stop（用 PID_FILE）
 if [ -x "${APP_DEST}/cmd/main" ]; then

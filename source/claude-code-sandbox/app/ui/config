@@ -11,6 +11,18 @@
       "control": {
         "accessPerm": "editable"
       }
+    },
+    "claude-code-sandbox.console": {
+      "title": "Claude Code · 控制台",
+      "icon": "images/icon_console_{0}.png",
+      "type": "iframe",
+      "protocol": "http",
+      "port": "7682",
+      "url": "/",
+      "allUsers": true,
+      "control": {
+        "accessPerm": "editable"
+      }
     }
   }
 }
