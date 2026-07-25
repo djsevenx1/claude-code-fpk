@@ -2,16 +2,22 @@
 # Claude Code 沙箱 - uninstall_init
 # 卸载前：停服务 + 安全删除 API Key
 #
-# 关键设计（v1.2.3）：
-#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE 记录日志
-#   - 不使用 set -u / exec 2>> / trap ERR：避免静默失败
-#   - 不用 fallback 路径：用 TRIM_TEMP_LOGFILE（系统保证可写）
+# 关键设计（v1.2.4）：
+#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE
+#   - 同时写 ${TRIM_PKGVAR}/install.log 持久化位置
+#   - 不使用 set -u / exec 2>> / trap ERR
 
 LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall.log}"
+PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
 : > "$LOG_FILE" 2>/dev/null || true
 
-log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+log() {
+    local line="[$(date '+%H:%M:%S')] $*"
+    echo "$line" >> "$LOG_FILE"
+    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
+}
 die() {
     log "FATAL: $*"
     printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true

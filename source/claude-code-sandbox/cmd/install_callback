@@ -9,20 +9,21 @@
 #   - die() 先写日志详细原因，再写 TRIM_TEMP_LOGFILE 简短给用户
 
 LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.log}"
-# 可选：用户期望的 info.log（系统错误提示里写明的位置）
-INFO_LOG=""
+# 持久化日志：用户能在 ${TRIM_PKGVAR}/install.log 找到完整日志
+# （系统给的 /tmp/claude-code-sandbox.log.XXX 用完就清，用户找不到）
+PERSIST_LOG=""
 if [ -n "${TRIM_PKGVAR:-}" ]; then
-    INFO_LOG="${TRIM_PKGVAR}/info.log"
+    PERSIST_LOG="${TRIM_PKGVAR}/install.log"
 fi
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$INFO_LOG" ] && mkdir -p "$(dirname "$INFO_LOG")" 2>/dev/null || true
+[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
 : > "$LOG_FILE" 2>/dev/null || true
 
 log() {
     local line="[$(date '+%H:%M:%S')] $*"
     echo "$line" >> "$LOG_FILE"
-    [ -n "$INFO_LOG" ] && echo "$line" >> "$INFO_LOG"
+    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
 }
 die() {
     log "FATAL: $*"

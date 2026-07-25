@@ -2,13 +2,19 @@
 # Claude Code 沙箱 - config_callback
 # 改配置后：用向导值重写 .env 与 settings.json，然后重启服务
 #
-# 关键设计（v1.2.3）：用 $TRIM_TEMP_LOGFILE
+# 关键设计（v1.2.4）：用 $TRIM_TEMP_LOGFILE + ${TRIM_PKGVAR}/install.log
 
 LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.log}"
+PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
 : > "$LOG_FILE" 2>/dev/null || true
 
-log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+log() {
+    local line="[$(date '+%H:%M:%S')] $*"
+    echo "$line" >> "$LOG_FILE"
+    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
+}
 die() {
     log "FATAL: $*"
     printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true

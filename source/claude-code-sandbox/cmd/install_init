@@ -11,14 +11,23 @@
 
 # fnOS 官方约定：生命周期脚本的日志写到 TRIM_TEMP_LOGFILE
 LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.log}"
+# 持久化日志：用户能直接打开看（系统给的 /tmp 文件用完就清）
+PERSIST_LOG=""
+if [ -n "${TRIM_PKGVAR:-}" ]; then
+    PERSIST_LOG="${TRIM_PKGVAR}/install.log"
+fi
+
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-# 先把日志文件清空 / 创建出来
+[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
 : > "$LOG_FILE" 2>/dev/null || true
 
-log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+log() {
+    local line="[$(date '+%H:%M:%S')] $*"
+    echo "$line" >> "$LOG_FILE"
+    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
+}
 die() {
     log "FATAL: $*"
-    # fnOS 在 exit 1 时会把 $TRIM_TEMP_LOGFILE 内容直接弹给用户
     printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
     exit 1
 }

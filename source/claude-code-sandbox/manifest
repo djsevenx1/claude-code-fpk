@@ -1,5 +1,5 @@
 appname=claude-code-sandbox
-version=1.2.3
+version=1.2.4
 display_name=Claude Code
 desc=<p>把 Anthropic Claude Code CLI 装到飞牛 NAS 上，以<b>包用户 + 工作目录隔离</b>方式沙箱运行，通过 Web 终端 (ttyd) 访问。</p><p>依赖 fnOS 应用商店的 <code>nodejs_v22</code> 运行时。</p>
 source=thirdparty
@@ -15,4 +15,4 @@ install_type=root
 install_dep_apps=nodejs_v22
 ctl_stop=true
 disable_authorization_path=false
-changelog=<ul><li>1.2.3 按飞牛官方文档重写所有生命周期脚本的日志：统一用 $TRIM_TEMP_LOGFILE（系统保证可写，失败时直接展示给用户），彻底移除 v1.2.0–v1.2.2 一直用错的 ${TRIM_PKGVAR:-/var/apps/.../var} fallback 路径——这个 fallback 指向软链，安装阶段还没建出来，导致 info.log 永远写不出来</li><li>1.2.3 cmd/main 改用 notepad 官方写法 LOG_FILE="${TRIM_PKGVAR}/ttyd.log"（无 fallback），目录由系统创建；移除 v1.2.2 的兜底 mkdir</li><li>1.2.3 移除所有 set -u / exec 2>> / trap ERR：这些在 TRIM_TEMP_LOGFILE 不可写时会反过来把脚本静默杀掉</li><li>1.2.2 修 cmd/main ttyd 鉴权 flag 错误：原本 -a 是 --auth-bypass，改用数组展开传 -c</li><li>1.2.1 install_init 不再因 nodejs_v22 缺失而 die 阻挡安装</li><li>1.2.0 修"安装中 100%"卡住</li><li>1.1.1 兼容 fnOS 0.9.x 把 x86_64 上报为 x86</li><li>1.1.0 修 install_callback、补齐 wizard</li></ul>
+changelog=<ul><li>1.2.4 图标换成官方 Anthropic Claude Code 6 角 sparkle（coral #D97757 on 深蓝 #18182F），去掉原来的 "&gt;_" 终端提示符</li><li>1.2.4 日志同时写到 ${TRIM_PKGVAR}/install.log 持久化位置：之前系统给 TRIM_TEMP_LOGFILE 是 /tmp 下带随机后缀的临时文件 (/tmp/claude-code-sandbox.log.XXXXX)，用完即清，用户根本找不到；现在用户可在应用数据目录看完整安装日志</li><li>1.2.3 按飞牛官方文档重写所有生命周期脚本的日志：统一用 $TRIM_TEMP_LOGFILE（系统保证可写，失败时直接展示给用户）</li><li>1.2.3 cmd/main 改用 notepad 官方写法 LOG_FILE="${TRIM_PKGVAR}/ttyd.log"（无 fallback）</li><li>1.2.3 移除所有 set -u / exec 2>> / trap ERR</li><li>1.2.2 修 cmd/main ttyd 鉴权 flag 错误：-a 改 -c（数组展开）</li><li>1.2.1 install_init 不再因 nodejs_v22 缺失而 die 阻挡安装</li><li>1.2.0 修"安装中 100%"卡住</li><li>1.1.1 兼容 fnOS 0.9.x 把 x86_64 上报为 x86</li><li>1.1.0 修 install_callback、补齐 wizard</li></ul>
