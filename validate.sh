@@ -18,6 +18,7 @@ for p in manifest ICON.PNG ICON_256.PNG \
          cmd/upgrade_init cmd/upgrade_callback \
          cmd/uninstall_init cmd/uninstall_callback \
          cmd/config_init cmd/config_callback \
+         cmd/lib/log.sh \
          config/privilege config/resource \
          app/ui/config app/ui/images/icon_64.png app/ui/images/icon_256.png \
          wizard/install wizard/config; do
@@ -30,8 +31,16 @@ for f in $SRC/config/privilege $SRC/config/resource $SRC/app/ui/config $SRC/wiza
 done
 
 echo "=== 3. shell 脚本无语法错 ==="
-for f in $SRC/cmd/*; do
-    bash -n "$f" 2>/dev/null && check true "$f bash -n OK" || check false "$f bash 语法错"
+# lib/ 子目录里的共享脚本
+for f in "$SRC/cmd/lib/log.sh"; do
+    [ -f "$f" ] && bash -n "$f" 2>/dev/null && check true "$f bash -n OK" || check false "$f bash 语法错或缺失"
+done
+# cmd/ 顶层脚本
+for f in "$SRC/cmd/main" "$SRC/cmd/install_init" "$SRC/cmd/install_callback" \
+         "$SRC/cmd/upgrade_init" "$SRC/cmd/upgrade_callback" \
+         "$SRC/cmd/uninstall_init" "$SRC/cmd/uninstall_callback" \
+         "$SRC/cmd/config_init" "$SRC/cmd/config_callback"; do
+    [ -f "$f" ] && bash -n "$f" 2>/dev/null && check true "$f bash -n OK" || check false "$f bash 语法错或缺失"
 done
 
 echo "=== 4. 图标尺寸 ==="

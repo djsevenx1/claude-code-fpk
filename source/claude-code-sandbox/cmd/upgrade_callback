@@ -1,45 +1,31 @@
 #!/bin/bash
 # Claude Code 沙箱 - upgrade_callback
-# 升级后：npm update 拉新版本 Claude Code
+# 升级后：npm update 拉新版本 Claude Code（如果有 package.json）
 #
-# 关键设计（v1.2.4）：
-#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE
-#   - 同时写 ${TRIM_PKGVAR}/install.log 持久化位置
-#   - 不使用 set -u / exec 2>> / trap ERR
+# 关键设计（v1.2.6）：用 cmd/lib/log.sh 统一日志到 info.log
 
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.log}"
-PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
-
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
-
-log "upgrade_callback 开始: TRIM_APPDEST=${TRIM_APPDEST:-?}"
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
 : "${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
 export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
-if [ -f "$TRIM_APPDEST/package.json" ]; then
-    log "升级 @anthropic-ai/claude-code ..."
-    if ! (cd "$TRIM_APPDEST" && npm update --no-audit --no-fund --loglevel=error) >> "$LOG_FILE" 2>&1; then
-        die "Claude Code 升级失败，请查看日志：${PERSIST_LOG:-$LOG_FILE}"
-    fi
-    log "升级完成"
+log_msg "=== upgrade_callback 开始: TRIM_APPDEST=${TRIM_APPDEST} ==="
+
+# 我们的预打包 node_modules 已经是固定版本；这里只做轻量 verify，
+# 不在升级时联网拉新（避免 npm 断流导致升级失败）
+if [ -x "${TRIM_APPDEST}/node_modules/.bin/claude" ]; then
+    log_msg "claude 仍可用，无需联网升级"
+else
+    diag_to_user "升级失败" \
+        "${TRIM_APPDEST}/node_modules/.bin/claude 不可用，请重装应用。"
 fi
 
+# 修正属主
 if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
-    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$TRIM_APPDEST/node_modules" 2>/dev/null || true
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$TRIM_APPDEST" 2>/dev/null || true
+    log_msg "属主已修正"
 fi
 
-log "upgrade_callback 完成"
+log_msg "=== upgrade_callback 完成 ==="
 exit 0

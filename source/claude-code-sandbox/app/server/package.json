@@ -1,0 +1,9 @@
+{
+  "name": "claude-code-sandbox-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pre-built Claude Code server for fnOS FPK",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0"
+  }
+}

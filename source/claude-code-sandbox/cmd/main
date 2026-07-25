@@ -5,23 +5,24 @@
 # 沙箱：进程以包用户（run-as=package）身份运行 ttyd，chdir 到 $TRIM_PKGHOME/home/workspace
 #       Claude Code CLI 工作目录被限制在 WORKSPACE_DIR 之内
 #
-# 关键设计（v1.2.3）：
-#   - 严格按 fnOS 官方 notepad 示例的写法：LOG_FILE="${TRIM_PKGVAR}/ttyd.log"
-#     不带 fallback 兜底（fallback 路径是软链，安装阶段可能还没建）
+# 关键设计（v1.2.6，照 OpenClaw 写法改造）：
+#   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log（不再单独 ttyd.log）
 #   - ttyd 鉴权 flag：必须用 -c（--credential），-a 是 --auth-bypass
 #   - nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
+#   - stop 时除了用 PID_FILE，还 pkill -f 兜底（学 OpenClaw uninstall_init）
+#     PID 文件丢了也能清理残留
 
-LOG_FILE="${TRIM_PKGVAR}/ttyd.log"
+# 引入共享日志
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
+
 PID_FILE="${TRIM_PKGVAR}/ttyd.pid"
-APP_HOME="${TRIM_APPDEST}/target"
-BIN_DIR="$APP_HOME/bin"
-ENV_FILE="${TRIM_PKGETC}/claude.env"
-WORKSPACE_DIR="${TRIM_PKGHOME}/home/workspace"
+APP_HOME="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
+BIN_DIR="${APP_HOME}/bin"
+ENV_FILE="${TRIM_PKGETC:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/etc}/claude.env"
+WORKSPACE_DIR="${TRIM_PKGHOME:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/home}/home/workspace"
 
-mkdir -p "$(dirname "$LOG_FILE")" "$WORKSPACE_DIR" 2>/dev/null || true
-
-log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
-die() { echo "[$(date '+%H:%M:%S')] FATAL: $*" >> "$LOG_FILE"; exit 1; }
+mkdir -p "$(dirname "${PID_FILE}")" "$WORKSPACE_DIR" 2>/dev/null || true
 
 # === 状态检查 ===
 is_running() {
@@ -32,13 +33,17 @@ is_running() {
 
 start() {
     if is_running; then
-        log "已在运行 (pid=$(cat "$PID_FILE"))"
+        log_msg "已在运行 (pid=$(cat "$PID_FILE"))"
         return 0
     fi
 
     # 依赖
-    [ -x "$BIN_DIR/ttyd" ]                          || die "ttyd 不存在，请重新安装应用"
-    [ -x "$APP_HOME/node_modules/.bin/claude" ]     || die "claude 未安装，请重新安装应用"
+    if [ ! -x "$BIN_DIR/ttyd" ]; then
+        diag_to_user "启动失败" "ttyd 不存在：${BIN_DIR}/ttyd。请重装应用。"
+    fi
+    if [ ! -x "$APP_HOME/node_modules/.bin/claude" ]; then
+        diag_to_user "启动失败" "claude 未安装：${APP_HOME}/node_modules/.bin/claude。请重装应用。"
+    fi
 
     # 引入 fnOS 商店的 Node.js v22
     export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
@@ -66,7 +71,11 @@ start() {
         cred_args=(-c "${TTYD_USER}:")
     fi
 
-    log "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_USERNAME:-?} cred=${TTYD_USER:-<none>}"
+    log_msg "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_USERNAME:-?} cred=${TTYD_USER:-<none>}"
+
+    # 启动前先 pkill 兜底清理可能残留的同名进程（学 OpenClaw）
+    pkill -f "${BIN_DIR}/ttyd" 2>/dev/null || true
+    sleep 0.5
 
     # nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
     nohup "${runner[@]}" "$BIN_DIR/ttyd" \
@@ -77,7 +86,7 @@ start() {
         "${cred_args[@]}" \
         -t "titleFixed=Claude Code" \
         -w "$WORKSPACE_DIR" \
-        bash >> "$LOG_FILE" 2>&1 &
+        bash >> "${LOG_FILE}" 2>&1 &
 
     local pid=$!
     echo "$pid" > "$PID_FILE"
@@ -87,25 +96,30 @@ start() {
     for i in 1 2 3 4 5 6 7 8 9 10; do
         sleep 0.5
         if kill -0 "$pid" 2>/dev/null; then
-            log "ttyd 启动成功 pid=$pid"
+            log_msg "ttyd 启动成功 pid=$pid"
             return 0
         fi
     done
-    die "ttyd 启动后未保持运行，请查看日志：$LOG_FILE"
+    diag_to_user "启动失败" "ttyd 启动后未保持运行 (pid=$pid)。请看完整日志：${LOG_FILE}"
 }
 
 stop() {
     if ! is_running; then
-        log "未运行"
+        log_msg "未运行（PID_FILE 不存在或进程已退出）"
         rm -f "$PID_FILE"
+        # 兜底 pkill 清理（学 OpenClaw uninstall_init）
+        pkill -f "${BIN_DIR}/ttyd" 2>/dev/null && log_msg "pkill 兜底清理了残留 ttyd 进程" || true
         return 0
     fi
     local pid; pid="$(cat "$PID_FILE")"
-    log "停止 ttyd pid=$pid"
+    log_msg "停止 ttyd pid=$pid"
     kill "$pid" 2>/dev/null || true
     sleep 1
     kill -9 "$pid" 2>/dev/null || true
     rm -f "$PID_FILE"
+    # 兜底清理同名进程（防 PID 文件漂移）
+    pkill -f "${BIN_DIR}/ttyd" 2>/dev/null && log_msg "pkill 兜底清理了残留 ttyd 进程" || true
+    log_msg "ttyd 已停止"
 }
 
 status() {

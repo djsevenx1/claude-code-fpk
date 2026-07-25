@@ -4,3 +4,13 @@ fpk/
 .DS_Store
 build/
 build_fnpack
+# 预构建的 ttyd 二进制和 node_modules 只入 FPK，不入 git 仓
+source/claude-code-sandbox/app/server/bin/
+source/claude-code-sandbox/app/server/node_modules/
+# GitHub API 临时文件
+.asset.json
+.release.json
+.release-body.json
+.upload_url
+# 已签名的 FPK 产物（GitHub release 里有，这里不入仓）
+dist/

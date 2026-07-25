@@ -1,124 +1,40 @@
 #!/bin/bash
 # Claude Code 沙箱 - install_init
-# 安装前预检：验证 nodejs_v22 运行时可用、目标架构支持、网络可达。
+# 安装前预检：只验证 nodejs_v22 运行时 + 预构建资源完整性。
 #
-# 关键设计（v1.2.3）：
-#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE 记录日志
-#     （系统保证该路径存在并可写，失败时由系统直接展示给用户）
-#   - 不再用 ${TRIM_PKGVAR:-...} 这种 fallback 兜底：fallback 是 /var/apps/.../var
-#     这个软链在 install_init 阶段可能还没建出来，导致日志永远写不出来
-#   - 不使用 set -u / exec 2>> / trap ERR：避免静默失败
+# 关键设计（v1.2.6，照 OpenClaw 写法改造）：
+#   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log
+#   - 失败时把"可执行诊断"（node 版本、python 探测、关键路径、最近日志）写到
+#     TRIM_TEMP_LOGFILE，fnOS 展示给用户（学 OpenClaw install_callback）
+#   - install_init 只做最少预检，详细初始化放 install_callback
 
-# fnOS 官方约定：生命周期脚本的日志写到 TRIM_TEMP_LOGFILE
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.log}"
-# 持久化日志：用户能直接打开看（系统给的 /tmp 文件用完就清）
-PERSIST_LOG=""
-if [ -n "${TRIM_PKGVAR:-}" ]; then
-    PERSIST_LOG="${TRIM_PKGVAR}/install.log"
-fi
+# 引入共享日志
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
+# 引入 fnOS 应用商店的 Node.js v22（install_init 时系统尚未自动加 PATH）
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
+log_msg "=== install_init 开始 ==="
+log_msg "TRIM_APPNAME=${TRIM_APPNAME:-?}  TRIM_APPDEST=${TRIM_APPDEST:-?}"
 
-log "install_init 开始: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
-
-# ============================================================
-# 0. 幂等：检测重装，调用 uninstall_init 清理
-# ============================================================
-APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
-# v1.2.2 修复：用 ${TRIM_APPDEST} 而非硬编码 /var/apps/claude-code-sandbox/cmd/main
-if [ -x "${APP_DEST}/cmd/main" ]; then
-    log "检测到旧版本残留（${APP_DEST}/cmd/main 存在），执行 uninstall_init 清理"
-    if [ -x "${APP_DEST}/cmd/uninstall_init" ]; then
-        bash "${APP_DEST}/cmd/uninstall_init" >> "$LOG_FILE" 2>&1 || true
-    fi
-    # 清理可能冲突的 ttyd 旧二进制、node_modules、env
-    rm -f "${APP_DEST}/bin/ttyd" 2>/dev/null || true
-    rm -rf "${APP_DEST}/node_modules" 2>/dev/null || true
-    rm -f "${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env" 2>/dev/null || true
-    log "旧残留清理完成"
-fi
-
-# ============================================================
 # 1. nodejs_v22 运行时检测
-# ============================================================
-# manifest 已经声明 install_dep_apps=nodejs_v22，fnOS 商店会自动弹窗。
-# 这里不阻挡（v1.2.1 之前是 die 阻挡，导致"100%→0%回滚"）。
-# 但要给出明确指引。
-NODEJS_PATH="/var/apps/nodejs_v22/target/bin"
-if ! command -v node >/dev/null 2>&1 && [ ! -x "${NODEJS_PATH}/node" ]; then
-    die "未检测到 nodejs_v22 运行时。
-
-请回飞牛应用中心 → 我的应用 → 找到 'nodejs_v22' → 点安装。
-装好后再重新点 Claude Code 的'安装'。
-
-（manifest 已声明 install_dep_apps=nodejs_v22，理论上 fnOS 商店会
-  在第一次安装时自动弹窗。如果被跳过，请手动从应用商店装。）"
+if ! command -v node >/dev/null 2>&1; then
+    diag_to_user "安装预检失败" \
+        "未检测到 nodejs_v22 运行时。请到 fnOS 应用中心搜索 'nodejs_v22' 安装后再重装 Claude Code。"
 fi
-# 备用：fnOS 不同小版本路径可能不一致，全局找
-if [ ! -x "${NODEJS_PATH}/node" ]; then
-    FOUND_NODE=$(find /var/apps -maxdepth 3 -name node -type f -executable 2>/dev/null | grep nodejs | head -1)
-    if [ -z "$FOUND_NODE" ]; then
-        die "nodejs_v22 装在非标准路径，且 /var/apps 下找不到 node。请确认应用商店的 nodejs_v22 已装好。"
-    else
-        log "nodejs_v22 装在非标准路径: $FOUND_NODE（继续）"
-    fi
+log_msg "node 版本: $(node --version 2>/dev/null || echo '<failed>')"
+
+# 2. 预构建资源完整性（ttyd + claude 都在 FPK 里，不下载）
+APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
+if [ ! -x "${APP_DEST}/bin/ttyd" ]; then
+    diag_to_user "安装预检失败" \
+        "FPK 损坏：缺少 ${APP_DEST}/bin/ttyd。请重新下载安装包再装。"
 fi
-log "node=$(node -v) npm=$(npm -v)"
-
-# ============================================================
-# 2. 架构检查（兼容 fnOS 0.9.x 把 x86_64 上报为 x86）
-# ============================================================
-ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64|x86)            NORM_ARCH="x86_64"  ;;
-    aarch64|arm64)                NORM_ARCH="aarch64" ;;
-    i386|i686|i486|i586)          NORM_ARCH="i386"    ;;
-    *)                            NORM_ARCH="$ARCH"   ;;
-esac
-case "$NORM_ARCH" in
-    x86_64)  log "架构 OK: x86_64 (raw=$ARCH)" ;;
-    aarch64) log "架构 OK: aarch64 (但本包仅 platform=x86，不保证能装)" ;;
-    *) die "不支持的 CPU 架构: $ARCH（仅支持 x86_64）" ;;
-esac
-
-# ============================================================
-# 3. 网络可达性（不阻塞，仅记录）
-# ============================================================
-if command -v curl >/dev/null 2>&1; then
-    if curl -fsSI --max-time 10 https://github.com >/dev/null 2>&1; then
-        log "github.com 可达"
-    else
-        log "WARN: github.com 暂不可达，install_callback 阶段下载 ttyd 可能失败"
-    fi
-    if curl -fsSI --max-time 10 https://registry.npmmirror.com >/dev/null 2>&1; then
-        log "registry.npmmirror.com 可达"
-    else
-        log "WARN: npmmirror 暂不可达，install_callback 装 claude-code 可能失败"
-    fi
+if [ ! -x "${APP_DEST}/node_modules/.bin/claude" ]; then
+    diag_to_user "安装预检失败" \
+        "FPK 损坏：缺少 ${APP_DEST}/node_modules/.bin/claude。请重新下载安装包再装。"
 fi
 
-# ============================================================
-# 4. 磁盘空间（不阻塞，仅记录）
-# ============================================================
-if command -v df >/dev/null 2>&1; then
-    AVAIL_KB=$(df -Pk "${TRIM_PKGVAR:-/var/apps}" 2>/dev/null | awk 'NR==2 {print $4}')
-    if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 204800 ]; then
-        log "WARN: 可用空间 ${AVAIL_KB}KB < 200MB，可能装不下 claude-code"
-    fi
-fi
-
-log "install_init OK"
+log_msg "=== install_init 完成 ==="
 exit 0

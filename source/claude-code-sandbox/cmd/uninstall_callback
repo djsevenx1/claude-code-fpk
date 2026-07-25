@@ -1,16 +1,9 @@
 #!/bin/bash
 # Claude Code 沙箱 - uninstall_callback
 # fnpack 1.2.3 build 强制要求此文件存在；卸载清理实际由 uninstall_init 完成
-# （因为 fnpack 1.2.3 不支持 wizard/uninstall，所以没有 wizard_purge_data 选项）
-#
-# 关键设计（v1.2.4）：用 $TRIM_TEMP_LOGFILE + ${TRIM_PKGVAR}/install.log
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall-cb.log}"
-PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
-{
-    echo "[$(date '+%H:%M:%S')] uninstall_callback: noop (cleanup done in uninstall_init)"
-    [ -n "$PERSIST_LOG" ] && cat
-} >> "$LOG_FILE" 2>/dev/null
+
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
+
+log_msg "uninstall_callback: noop (cleanup done in uninstall_init)"
 exit 0

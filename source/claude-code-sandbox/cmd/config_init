@@ -2,31 +2,18 @@
 # Claude Code 沙箱 - config_init
 # 改配置前：停服务
 #
-# 关键设计（v1.2.4）：用 $TRIM_TEMP_LOGFILE + ${TRIM_PKGVAR}/install.log
+# 关键设计（v1.2.6）：用 cmd/lib/log.sh 统一日志
 
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.log}"
-PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
+log_msg "=== config_init 开始 ==="
 
-# 改配置前先停服务
-APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
 if [ -x "${APP_DEST}/cmd/main" ]; then
-    log "停止服务: ${APP_DEST}/cmd/main stop"
-    "${APP_DEST}/cmd/main" stop >> "$LOG_FILE" 2>&1 || true
+    log_msg "停止服务: ${APP_DEST}/cmd/main stop"
+    "${APP_DEST}/cmd/main" stop >> "${LOG_FILE}" 2>&1 || true
 fi
 
-log "config_init 完成"
+log_msg "config_init 完成"
 exit 0

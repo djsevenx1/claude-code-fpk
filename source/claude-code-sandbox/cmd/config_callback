@@ -2,26 +2,14 @@
 # Claude Code 沙箱 - config_callback
 # 改配置后：用向导值重写 .env 与 settings.json，然后重启服务
 #
-# 关键设计（v1.2.4）：用 $TRIM_TEMP_LOGFILE + ${TRIM_PKGVAR}/install.log
+# 关键设计（v1.2.6）：用 cmd/lib/log.sh 统一日志
 
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.log}"
-PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
+export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
-log "config_callback 开始"
+log_msg "=== config_callback 开始 ==="
 
 : "${TRIM_PKGETC:?TRIM_PKGETC 未设置}"
 : "${TRIM_PKGHOME:?TRIM_PKGHOME 未设置}"
@@ -30,6 +18,8 @@ ENV_FILE="$TRIM_PKGETC/claude.env"
 HOME_DIR="$TRIM_PKGHOME/home"
 CLAUDE_HOME="$HOME_DIR/.claude"
 
+# 改配置时强制用 wizard 值重写 .env（这跟 install_callback 的幂等保留不同：
+# 用户主动到设置页改的就是最新值，应该覆盖）
 : > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 write_kv() {
@@ -44,10 +34,14 @@ write_kv "ANTHROPIC_MODEL"      "${wizard_anthropic_model:-claude-sonnet-4-5}"
 write_kv "ANTHROPIC_API_KEY"    "${wizard_anthropic_api_key:-}"
 write_kv "ANTHROPIC_AUTH_TOKEN" "${wizard_anthropic_auth_token:-}"
 chmod 600 "$ENV_FILE"
-log ".env 已更新: $ENV_FILE"
+log_msg ".env 已更新: $ENV_FILE"
+log_kv "TTYD_USER"          "${wizard_ttyd_user:-}"
+log_kv "TTYD_PORT"          "${wizard_service_port:-7681}"
+log_kv "ANTHROPIC_BASE_URL" "${wizard_anthropic_base_url:-}"
+log_kv "ANTHROPIC_MODEL"    "${wizard_anthropic_model:-claude-sonnet-4-5}"
+log_kv "ANTHROPIC_API_KEY"  "${wizard_anthropic_api_key:-}"
 
 # 重建 settings.json
-export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 SETTINGS_JSON="$(python3 - "$ENV_FILE" <<'PY' 2>/dev/null
 import json, sys, os, shlex
 env_path = sys.argv[1]
@@ -67,22 +61,26 @@ if out:
 PY
 )"
 if [ -n "$SETTINGS_JSON" ] && [ "$SETTINGS_JSON" != "{}" ] && [ "$SETTINGS_JSON" != "null" ]; then
+    mkdir -p "$CLAUDE_HOME" 2>/dev/null || true
     printf '%s\n' "$SETTINGS_JSON" > "$CLAUDE_HOME/settings.json"
     chmod 600 "$CLAUDE_HOME/settings.json"
-    log "settings.json 已更新"
+    log_msg "settings.json 已更新"
+else
+    log_msg "wizard 未提供 Anthropic 配置，跳过 settings.json"
 fi
 
 # 修正属主
 if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
     chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$TRIM_PKGETC" "$CLAUDE_HOME" 2>/dev/null || true
+    log_msg "属主已修正"
 fi
 
-# 重启
-APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+# 重启服务
+APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
 if [ -x "${APP_DEST}/cmd/main" ]; then
-    log "重启服务: ${APP_DEST}/cmd/main start"
-    "${APP_DEST}/cmd/main" start >> "$LOG_FILE" 2>&1 || true
+    log_msg "重启服务: ${APP_DEST}/cmd/main start"
+    "${APP_DEST}/cmd/main" start >> "${LOG_FILE}" 2>&1 || true
 fi
 
-log "config_callback 完成"
+log_msg "=== config_callback 完成 ==="
 exit 0

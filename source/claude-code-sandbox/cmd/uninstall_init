@@ -1,49 +1,37 @@
 #!/bin/bash
 # Claude Code 沙箱 - uninstall_init
-# 卸载前：停服务 + 安全删除 API Key
+# 卸载前：停服务 + 安全删除 .env（API Key）
 #
-# 关键设计（v1.2.4）：
-#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE
-#   - 同时写 ${TRIM_PKGVAR}/install.log 持久化位置
-#   - 不使用 set -u / exec 2>> / trap ERR
+# 关键设计（v1.2.6）：用 cmd/lib/log.sh 统一日志 + pkill 兜底清理（学 OpenClaw）
 
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall.log}"
-PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
+log_msg "=== uninstall_init 开始 ==="
 
-log "uninstall_init 开始"
+# 1. pkill 兜底清理 ttyd 残留（学 OpenClaw uninstall_init）
+APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
+BIN_DIR="${APP_DEST}/bin"
+pkill -f "${BIN_DIR}/ttyd" 2>/dev/null && log_msg "pkill 清理了残留 ttyd 进程" || true
+pkill -f "claude-code-sandbox" 2>/dev/null && log_msg "pkill 清理了残留 claude 进程" || true
 
-# 1. 停服务（用 TRIM_APPDEST 定位，避免硬编码）
-APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+# 2. 走标准 stop（用 PID_FILE）
 if [ -x "${APP_DEST}/cmd/main" ]; then
-    log "停止服务: ${APP_DEST}/cmd/main stop"
-    "${APP_DEST}/cmd/main" stop >> "$LOG_FILE" 2>&1 || true
+    log_msg "停止服务: ${APP_DEST}/cmd/main stop"
+    "${APP_DEST}/cmd/main" stop >> "${LOG_FILE}" 2>&1 || true
 fi
 
-# 2. 安全删除 .env（API Key / Token 敏感）
-ENV_FILE="${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env"
+# 3. 安全删除 .env（API Key / Token 敏感）
+ENV_FILE="${TRIM_PKGETC:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/etc}/claude.env"
 if [ -f "$ENV_FILE" ]; then
     if command -v shred >/dev/null 2>&1; then
         shred -u "$ENV_FILE" 2>/dev/null || rm -f "$ENV_FILE"
     else
         rm -f "$ENV_FILE"
     fi
-    log "已安全删除 .env: $ENV_FILE"
+    log_msg "已安全删除 .env: $ENV_FILE"
 fi
 
-# 3. 退出时由 fnOS 自动清理 target/etc/var/home 等目录
-log "uninstall_init 完成（target/etc/var/home 由 fnOS 清理）"
+# 4. 退出时由 fnOS 自动清理 target/etc/var/home 等目录
+log_msg "=== uninstall_init 完成（target/etc/var/home 由 fnOS 清理）==="
 exit 0

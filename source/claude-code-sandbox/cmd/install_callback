@@ -1,157 +1,81 @@
 #!/bin/bash
 # Claude Code 沙箱 - install_callback
-# 安装回调：装 ttyd + 装 Claude Code CLI + 写 .env + 写 settings.json
+# 安装回调：建目录 + 写 .env + 写 settings.json + 设权限。
 #
-# 关键设计（v1.2.3）：
-#   - 严格按 fnOS 官方 notepad 示例的写法：单文件日志 append
-#   - 生命周期脚本统一用 $TRIM_TEMP_LOGFILE（系统保证可写，失败时弹给用户）
-#   - 不用 set -u / exec 2>> / trap ERR：v1.2.0 之前这些都曾导致脚本静默退出
-#   - die() 先写日志详细原因，再写 TRIM_TEMP_LOGFILE 简短给用户
+# 关键设计（v1.2.6，照 OpenClaw 写法改造）：
+#   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log
+#   - 失败时把"可执行诊断"写到 TRIM_TEMP_LOGFILE（学 OpenClaw）
+#   - 幂等：重装时如果 .env / settings.json / claude.json 已存在，跳过覆盖
+#     （保护用户的 API Key 不被空字符串覆盖成空）
+#   - 不使用 set -u / exec 2>> / trap ERR
 
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.log}"
-# 持久化日志：用户能在 ${TRIM_PKGVAR}/install.log 找到完整日志
-# （系统给的 /tmp/claude-code-sandbox.log.XXX 用完就清，用户找不到）
-PERSIST_LOG=""
-if [ -n "${TRIM_PKGVAR:-}" ]; then
-    PERSIST_LOG="${TRIM_PKGVAR}/install.log"
-fi
+# 引入共享日志
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
-
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
-
-log "install_callback 开始: TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_USERNAME=${TRIM_USERNAME:-?} TRIM_PKGVAR=${TRIM_PKGVAR:-?}"
-
-# ============================================================
-# 1. 路径与变量兜底
-# ============================================================
-APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
-BIN_DIR="${APP_DEST}/bin"
-ENV_FILE="${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env"
-HOME_DIR="${TRIM_PKGHOME:-/var/apps/claude-code-sandbox/home}/home"
-WORKSPACE_DIR="${HOME_DIR}/workspace"
-CLAUDE_HOME="${HOME_DIR}/.claude"
-
-# 引入 fnOS 应用商店装的 Node.js v22
 export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
-# 工具检查
-command -v node >/dev/null 2>&1 || die "未找到 node，请先装 nodejs_v22 运行时"
-command -v npm  >/dev/null 2>&1 || die "未找到 npm，请确认 nodejs_v22 安装完整"
-command -v curl >/dev/null 2>&1 || die "未找到 curl，请检查系统"
-
-log "APP_DEST=$APP_DEST  USER=${TRIM_USERNAME:-?}  node=$(node -v)"
-
-mkdir -p "$BIN_DIR" "$HOME_DIR" "$WORKSPACE_DIR" "$CLAUDE_HOME" 2>/dev/null \
-    || die "无法创建应用目录 $BIN_DIR / $HOME_DIR，请检查权限"
+log_msg "=== install_callback 开始 ==="
+log_msg "TRIM_APPNAME=${TRIM_APPNAME:-?}  TRIM_APPDEST=${TRIM_APPDEST:-?}"
 
 # ============================================================
-# 2. 下载 ttyd 静态二进制
+# 1. 路径
 # ============================================================
-TTYD_VERSION="1.7.7"
-ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
-case "$ARCH" in
-    x86_64|amd64|x86)  TTYD_ARCH="x86_64"  ;;
-    aarch64|arm64)     TTYD_ARCH="aarch64" ;;
-    *) die "不支持的 CPU 架构: $ARCH（仅支持 x86_64）" ;;
-esac
+APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
+SERVER_DIR="${APP_DEST}"
+ENV_FILE="${TRIM_PKGETC:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/etc}/claude.env"
+HOME_DIR="${TRIM_PKGHOME:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/home}/home"
+WORKSPACE_DIR="${HOME_DIR}/workspace"
+CLAUDE_HOME="${HOME_DIR}/.claude"
+ENV_EXISTED=0
 
-if [ ! -x "$BIN_DIR/ttyd" ]; then
-    log "下载 ttyd $TTYD_VERSION ($TTYD_ARCH) ..."
-    if ! curl -fsSL --max-time 90 \
-        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
-        -o "$BIN_DIR/ttyd.tmp"; then
-        die "ttyd 下载失败，请检查 NAS 能否访问 github.com（详见 $LOG_FILE）"
-    fi
-    chmod +x "$BIN_DIR/ttyd.tmp"
-    mv "$BIN_DIR/ttyd.tmp" "$BIN_DIR/ttyd"
-    log "ttyd 安装完成"
+log_msg "APP_DEST=${APP_DEST}"
+log_msg "ENV_FILE=${ENV_FILE}"
+log_msg "WORKSPACE_DIR=${WORKSPACE_DIR}"
+
+# ============================================================
+# 2. 建目录（幂等：已存在不报错）
+# ============================================================
+if ! mkdir -p "$WORKSPACE_DIR" "$CLAUDE_HOME" 2>/dev/null; then
+    diag_to_user "安装回调失败" "无法创建工作目录：${WORKSPACE_DIR} / ${CLAUDE_HOME}。请检查磁盘空间和权限。"
+fi
+log_msg "工作目录就绪: ${WORKSPACE_DIR}, ${CLAUDE_HOME}"
+
+# ============================================================
+# 3. 写 .env（ttyd 鉴权 + Anthropic 配置）
+#    幂等：已存在则保留（保护用户 API Key）；首次安装才写
+# ============================================================
+if [ -f "$ENV_FILE" ]; then
+    ENV_EXISTED=1
+    log_msg ".env 已存在（重装场景），保留用户配置: $ENV_FILE"
+else
+    : > "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    {
+        printf 'TTYD_USER=%q\n'            "${wizard_ttyd_user:-}"
+        printf 'TTYD_PASSWORD=%q\n'        "${wizard_ttyd_password:-}"
+        printf 'TTYD_PORT=%q\n'            "${wizard_service_port:-7681}"
+        printf 'ANTHROPIC_BASE_URL=%q\n'   "${wizard_anthropic_base_url:-}"
+        printf 'ANTHROPIC_MODEL=%q\n'      "${wizard_anthropic_model:-claude-sonnet-4-5}"
+        printf 'ANTHROPIC_API_KEY=%q\n'    "${wizard_anthropic_api_key:-}"
+        printf 'ANTHROPIC_AUTH_TOKEN=%q\n' "${wizard_anthropic_auth_token:-}"
+    } >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    log_msg ".env 已写入: $ENV_FILE"
+    log_kv "TTYD_USER"          "${wizard_ttyd_user:-}"
+    log_kv "TTYD_PORT"          "${wizard_service_port:-7681}"
+    log_kv "ANTHROPIC_BASE_URL" "${wizard_anthropic_base_url:-}"
+    log_kv "ANTHROPIC_MODEL"    "${wizard_anthropic_model:-claude-sonnet-4-5}"
+    log_kv "ANTHROPIC_API_KEY"  "${wizard_anthropic_api_key:-}"
 fi
 
 # ============================================================
-# 3. 安装 Claude Code（项目本地，不污染全局）
+# 4. 写 ~/.claude/settings.json（幂等：已存在则保留）
 # ============================================================
-NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
-export npm_config_registry="$NPM_REGISTRY"
-export npm_config_loglevel="error"
-export npm_config_audit="false"
-export npm_config_fund="false"
-
-# package.json
-if [ ! -f "$APP_DEST/package.json" ]; then
-    cat > "$APP_DEST/package.json" <<'JSON'
-{
-  "name": "claude-code-sandbox",
-  "version": "1.2.3",
-  "private": true,
-  "description": "Claude Code 沙箱 for 飞牛 fnOS",
-  "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.0"
-  }
-}
-JSON
-fi
-
-if [ ! -x "$APP_DEST/node_modules/.bin/claude" ]; then
-    log "安装 @anthropic-ai/claude-code (registry=$NPM_REGISTRY) ..."
-    if ! (cd "$APP_DEST" && npm install) >> "$LOG_FILE" 2>&1; then
-        log "--- npm install 详细错误 ---" >> "$LOG_FILE"
-        (cd "$APP_DEST" && npm install) >> "$LOG_FILE" 2>&1 || true
-        die "Claude Code 安装失败，请查看日志：$LOG_FILE"
-    fi
-    log "Claude Code 安装完成"
-fi
-
-# 修正属主（npm install 跑在 root 下，但运行时是包用户）
-if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
-    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
-        "$APP_DEST/node_modules" "$APP_DEST/package.json" "$APP_DEST/package-lock.json" \
-        2>/dev/null || true
-fi
-
-# ============================================================
-# 4. 写 .env
-# ============================================================
-mkdir -p "$(dirname "$ENV_FILE")" 2>/dev/null || true
-: > "$ENV_FILE"
-chmod 600 "$ENV_FILE"
-
-write_kv() {
-    local k="$1" v="${2:-}"
-    [ -n "$v" ] || return 0
-    printf '%s=%q\n' "$k" "$v" >> "$ENV_FILE"
-}
-
-write_kv "TTYD_USER"            "${wizard_ttyd_user:-}"
-write_kv "TTYD_PASSWORD"        "${wizard_ttyd_password:-}"
-write_kv "TTYD_PORT"            "${wizard_service_port:-7681}"
-write_kv "ANTHROPIC_BASE_URL"   "${wizard_anthropic_base_url:-}"
-write_kv "ANTHROPIC_MODEL"      "${wizard_anthropic_model:-claude-sonnet-4-5}"
-write_kv "ANTHROPIC_API_KEY"    "${wizard_anthropic_api_key:-}"
-write_kv "ANTHROPIC_AUTH_TOKEN" "${wizard_anthropic_auth_token:-}"
-chmod 600 "$ENV_FILE"
-log "ENV 写入完成: $ENV_FILE"
-
-# 修正属主
-if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
-    chown "$TRIM_USERNAME:$TRIM_GROUPNAME" "$ENV_FILE" 2>/dev/null || true
-fi
-
-# ============================================================
-# 5. 写 ~/.claude/settings.json
-# ============================================================
-SETTINGS_JSON=$(python3 - "$ENV_FILE" 2>/dev/null <<'PY' || true
+if [ -f "$CLAUDE_HOME/settings.json" ]; then
+    log_msg "settings.json 已存在（重装场景），保留: $CLAUDE_HOME/settings.json"
+else
+    SETTINGS_JSON="$(python3 - "$ENV_FILE" 2>/dev/null <<'PY' || true
 import json, sys, os, shlex
 env_path = sys.argv[1]
 env = {}
@@ -168,32 +92,36 @@ out = {k: env[k] for k in keys if env.get(k)}
 if out:
     print(json.dumps({"env": out, "hasCompletedOnboarding": True}, ensure_ascii=False))
 PY
-)
+)"
 
-if [ -n "$SETTINGS_JSON" ] && [ "$SETTINGS_JSON" != "{}" ] && [ "$SETTINGS_JSON" != "null" ]; then
-    printf '%s\n' "$SETTINGS_JSON" > "$CLAUDE_HOME/settings.json"
-    chmod 600 "$CLAUDE_HOME/settings.json"
-    log "settings.json 写入完成"
-else
-    log "未配置 API Key，跳过 settings.json（用户可稍后 claude /login）"
+    if [ -n "$SETTINGS_JSON" ] && [ "$SETTINGS_JSON" != "{}" ] && [ "$SETTINGS_JSON" != "null" ]; then
+        printf '%s\n' "$SETTINGS_JSON" > "$CLAUDE_HOME/settings.json"
+        chmod 600 "$CLAUDE_HOME/settings.json"
+        log_msg "settings.json 已写入: $CLAUDE_HOME/settings.json"
+    else
+        log_msg "wizard 未提供 Anthropic 配置，跳过 settings.json（用户可稍后到应用设置里填）"
+    fi
 fi
 
-# ~/.claude.json
+# ~/.claude.json（Claude Code 的全局标记文件，幂等）
 if [ ! -f "$HOME_DIR/.claude.json" ]; then
     printf '{"hasCompletedOnboarding": true}\n' > "$HOME_DIR/.claude.json"
     chmod 600 "$HOME_DIR/.claude.json"
+    log_msg ".claude.json 已写入"
 fi
 
 # ============================================================
-# 6. 属主修正
+# 5. 属主修正
 # ============================================================
 if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
     chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
-        "${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}" \
-        "${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}" \
-        "${TRIM_PKGHOME:-/var/apps/claude-code-sandbox/home}" \
-        "$BIN_DIR" 2>/dev/null || true
+        "${TRIM_PKGETC}" "${TRIM_PKGVAR}" "${TRIM_PKGHOME}" \
+        2>/dev/null || true
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
+        "$SERVER_DIR" "$HOME_DIR" \
+        2>/dev/null || true
+    log_msg "属主已修正为 ${TRIM_USERNAME}:${TRIM_GROUPNAME:-?}"
 fi
 
-log "install_callback 完成"
+log_msg "=== install_callback 完成 (env_existed=${ENV_EXISTED}) ==="
 exit 0

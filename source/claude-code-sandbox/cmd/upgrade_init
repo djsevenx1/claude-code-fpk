@@ -2,33 +2,19 @@
 # Claude Code 沙箱 - upgrade_init
 # 升级前：停服务
 #
-# 关键设计（v1.2.4）：
-#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE
-#   - 同时写 ${TRIM_PKGVAR}/install.log 持久化位置，用户能直接打开
+# 关键设计（v1.2.6）：用 cmd/lib/log.sh 统一日志到 info.log
 
-LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.log}"
-PERSIST_LOG="${TRIM_PKGVAR:+${TRIM_PKGVAR}/install.log}"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-[ -n "$PERSIST_LOG" ] && mkdir -p "$(dirname "$PERSIST_LOG")" 2>/dev/null || true
-: > "$LOG_FILE" 2>/dev/null || true
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
+[ -f "${_LIB_DIR}/log.sh" ] && source "${_LIB_DIR}/log.sh"
 
-log() {
-    local line="[$(date '+%H:%M:%S')] $*"
-    echo "$line" >> "$LOG_FILE"
-    [ -n "$PERSIST_LOG" ] && echo "$line" >> "$PERSIST_LOG"
-}
-die() {
-    log "FATAL: $*"
-    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
-    exit 1
-}
+log_msg "=== upgrade_init 开始 ==="
 
 # 升级前停止服务
-APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
 if [ -x "${APP_DEST}/cmd/main" ]; then
-    log "停止服务: ${APP_DEST}/cmd/main stop"
-    "${APP_DEST}/cmd/main" stop >> "$LOG_FILE" 2>&1 || true
+    log_msg "停止服务: ${APP_DEST}/cmd/main stop"
+    "${APP_DEST}/cmd/main" stop >> "${LOG_FILE}" 2>&1 || true
 fi
 
-log "upgrade_init 完成"
+log_msg "upgrade_init 完成"
 exit 0
