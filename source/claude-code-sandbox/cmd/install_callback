@@ -1,13 +1,13 @@
 #!/bin/bash
 # Claude Code 沙箱 - install_callback
-# 安装回调：建目录 + 写 .env + 写 settings.json + 设权限。
+# 安装回调：建目录 + 下载 ttyd + 装 claude-code + 写 .env + 写 settings.json。
 #
-# 关键设计（v1.2.6，照 OpenClaw 写法改造）：
+# 关键设计（v1.2.7，照 OpenClaw (oc-deploy v1.2.3) install_callback 写法改造）：
 #   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log
-#   - 失败时把"可执行诊断"写到 TRIM_TEMP_LOGFILE（学 OpenClaw）
-#   - 幂等：重装时如果 .env / settings.json / claude.json 已存在，跳过覆盖
-#     （保护用户的 API Key 不被空字符串覆盖成空）
-#   - 不使用 set -u / exec 2>> / trap ERR
+#   - 失败时 diag_to_user 把"诊断包"写到 TRIM_TEMP_LOGFILE
+#   - 多镜像源重试（npm）+ 镜像源可达性测试（学 OpenClaw）
+#   - 幂等：重装时 .env / settings.json / .claude.json 已存在则保留
+#   - pkill -f ttyd 兜底清理残留进程（学 OpenClaw uninstall_init）
 
 # 引入共享日志
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
@@ -16,13 +16,13 @@ _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
 export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
 log_msg "=== install_callback 开始 ==="
-log_msg "TRIM_APPNAME=${TRIM_APPNAME:-?}  TRIM_APPDEST=${TRIM_APPDEST:-?}"
+log_msg "TRIM_APPNAME=${TRIM_APPNAME:-?}  TRIM_APPDEST=${TRIM_APPDEST:-?}  TRIM_USERNAME=${TRIM_USERNAME:-?}"
 
 # ============================================================
 # 1. 路径
 # ============================================================
 APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
-SERVER_DIR="${APP_DEST}"
+BIN_DIR="${APP_DEST}/bin"
 ENV_FILE="${TRIM_PKGETC:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/etc}/claude.env"
 HOME_DIR="${TRIM_PKGHOME:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/home}/home"
 WORKSPACE_DIR="${HOME_DIR}/workspace"
@@ -30,20 +30,143 @@ CLAUDE_HOME="${HOME_DIR}/.claude"
 ENV_EXISTED=0
 
 log_msg "APP_DEST=${APP_DEST}"
+log_msg "BIN_DIR=${BIN_DIR}"
 log_msg "ENV_FILE=${ENV_FILE}"
 log_msg "WORKSPACE_DIR=${WORKSPACE_DIR}"
 
 # ============================================================
-# 2. 建目录（幂等：已存在不报错）
+# 2. 工具检查 + 建目录
 # ============================================================
-if ! mkdir -p "$WORKSPACE_DIR" "$CLAUDE_HOME" 2>/dev/null; then
-    diag_to_user "安装回调失败" "无法创建工作目录：${WORKSPACE_DIR} / ${CLAUDE_HOME}。请检查磁盘空间和权限。"
+command -v node >/dev/null 2>&1 || diag_to_user "安装回调失败" "未找到 node，请先在 fnOS 应用中心装 nodejs_v22"
+command -v npm  >/dev/null 2>&1 || diag_to_user "安装回调失败" "未找到 npm，请确认 nodejs_v22 装完整了"
+command -v curl >/dev/null 2>&1 || diag_to_user "安装回调失败" "未找到 curl，请检查系统"
+
+if ! mkdir -p "$BIN_DIR" "$WORKSPACE_DIR" "$CLAUDE_HOME" 2>/dev/null; then
+    diag_to_user "安装回调失败" "无法创建应用目录：${BIN_DIR} / ${WORKSPACE_DIR} / ${CLAUDE_HOME}。请检查磁盘空间和权限。"
 fi
-log_msg "工作目录就绪: ${WORKSPACE_DIR}, ${CLAUDE_HOME}"
+log_msg "应用目录就绪"
+
+# 兜底清理残留 ttyd 进程（学 OpenClaw uninstall_init）
+pkill -f "${BIN_DIR}/ttyd" 2>/dev/null && log_msg "pkill 清理了残留 ttyd 进程" || true
 
 # ============================================================
-# 3. 写 .env（ttyd 鉴权 + Anthropic 配置）
-#    幂等：已存在则保留（保护用户 API Key）；首次安装才写
+# 3. 下载 ttyd（学 OpenClaw install_callback，多镜像重试）
+# ============================================================
+TTYD_VERSION="${TTYD_VERSION:-1.7.7}"
+ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
+case "$ARCH" in
+    x86_64|amd64|x86)  TTYD_ARCH="x86_64"  ;;
+    aarch64|arm64)     TTYD_ARCH="aarch64" ;;
+    *) diag_to_user "安装回调失败" "不支持的 CPU 架构: $ARCH（仅支持 x86_64 / aarch64）" ;;
+esac
+
+if [ ! -x "${BIN_DIR}/ttyd" ]; then
+    log_msg "下载 ttyd $TTYD_VERSION ($TTYD_ARCH) ..."
+    if ! curl -fsSL --max-time 90 \
+        "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" \
+        -o "${BIN_DIR}/ttyd.tmp"; then
+        rm -f "${BIN_DIR}/ttyd.tmp" 2>/dev/null || true
+        diag_to_user "安装回调失败" \
+            "ttyd 下载失败（github.com/tsl0922/ttyd）。请确认 NAS 能访问 github.com，或重试。"
+    fi
+    chmod +x "${BIN_DIR}/ttyd.tmp"
+    mv "${BIN_DIR}/ttyd.tmp" "${BIN_DIR}/ttyd"
+    log_msg "ttyd 安装完成: ${BIN_DIR}/ttyd"
+else
+    log_msg "ttyd 已存在（重装场景），跳过下载: ${BIN_DIR}/ttyd"
+fi
+
+# 验证 ttyd 可执行
+"${BIN_DIR}/ttyd" --version >> "${LOG_FILE}" 2>&1 \
+    || diag_to_user "安装回调失败" "ttyd 下载成功但无法执行（架构不匹配？）。请检查。"
+log_msg "ttyd 版本: $(${BIN_DIR}/ttyd --version 2>&1 | head -1)"
+
+# ============================================================
+# 4. 装 @anthropic-ai/claude-code（学 OpenClaw install_callback：多镜像重试）
+# ============================================================
+NPM_REGISTRIES=(
+    "https://registry.npmmirror.com/"
+    "https://mirrors.cloud.tencent.com/npm/"
+    "https://registry.npmjs.org/"
+)
+
+# package.json
+if [ ! -f "${APP_DEST}/package.json" ]; then
+    cat > "${APP_DEST}/package.json" <<'JSON'
+{
+  "name": "claude-code-sandbox",
+  "version": "1.2.7",
+  "private": true,
+  "description": "Claude Code 沙箱 for 飞牛 fnOS",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0"
+  }
+}
+JSON
+    log_msg "package.json 已写入"
+fi
+
+if [ ! -x "${APP_DEST}/node_modules/.bin/claude" ]; then
+    log_msg "装 @anthropic-ai/claude-code（多镜像重试）..."
+
+    # 探测镜像源可达性
+    WORKING_REGISTRIES=()
+    for REGISTRY in "${NPM_REGISTRIES[@]}"; do
+        if timeout 20 npm view @anthropic-ai/claude-code version --registry="${REGISTRY}" >/dev/null 2>&1; then
+            WORKING_REGISTRIES+=("${REGISTRY}")
+            log_msg "✓ ${REGISTRY} 可达"
+        elif timeout 5 curl -sfI "${REGISTRY}" >/dev/null 2>&1; then
+            WORKING_REGISTRIES+=("${REGISTRY}")
+            log_msg "✓ ${REGISTRY} 可达（curl fallback）"
+        else
+            log_msg "✗ ${REGISTRY} 不可达"
+        fi
+    done
+    [ ${#WORKING_REGISTRIES[@]} -eq 0 ] && WORKING_REGISTRIES=("${NPM_REGISTRIES[@]}")
+
+    INSTALL_SUCCESS=0
+    for REGISTRY in "${WORKING_REGISTRIES[@]}"; do
+        log_msg "尝试 ${REGISTRY} ..."
+        rm -rf "${APP_DEST}/node_modules" "${APP_DEST}/package-lock.json" 2>/dev/null || true
+        if (cd "${APP_DEST}" && timeout 300 npm install \
+                --registry="${REGISTRY}" \
+                --no-audit \
+                --no-fund \
+                --prefer-online \
+                --fetch-timeout=30000 \
+                --fetch-retries=2) >> "${LOG_FILE}" 2>&1; then
+            INSTALL_SUCCESS=1
+            log_msg "✓ ${REGISTRY} 安装成功"
+            break
+        fi
+        log_msg "✗ ${REGISTRY} 安装失败"
+    done
+
+    if [ $INSTALL_SUCCESS -eq 0 ]; then
+        diag_to_user "安装回调失败" \
+            "所有 npm 镜像源都装不上 @anthropic-ai/claude-code。请检查网络，或重试。完整日志：${LOG_FILE}"
+    fi
+
+    # 验证
+    if [ ! -x "${APP_DEST}/node_modules/.bin/claude" ]; then
+        diag_to_user "安装回调失败" \
+            "npm install 报成功但 ${APP_DEST}/node_modules/.bin/claude 不存在，磁盘满或权限问题？"
+    fi
+    log_msg "claude 安装完成"
+else
+    log_msg "claude 已存在（重装场景），跳过: ${APP_DEST}/node_modules/.bin/claude"
+fi
+
+# 修正属主
+if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
+    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
+        "${APP_DEST}/node_modules" "${APP_DEST}/package.json" "${APP_DEST}/package-lock.json" \
+        "${BIN_DIR}" 2>/dev/null || true
+    log_msg "属主已修正为 ${TRIM_USERNAME}:${TRIM_GROUPNAME:-?}"
+fi
+
+# ============================================================
+# 5. 写 .env（幂等：重装时已存在则保留，保护 API Key）
 # ============================================================
 if [ -f "$ENV_FILE" ]; then
     ENV_EXISTED=1
@@ -70,10 +193,10 @@ else
 fi
 
 # ============================================================
-# 4. 写 ~/.claude/settings.json（幂等：已存在则保留）
+# 6. 写 ~/.claude/settings.json（幂等）
 # ============================================================
 if [ -f "$CLAUDE_HOME/settings.json" ]; then
-    log_msg "settings.json 已存在（重装场景），保留: $CLAUDE_HOME/settings.json"
+    log_msg "settings.json 已存在（重装场景），保留"
 else
     SETTINGS_JSON="$(python3 - "$ENV_FILE" 2>/dev/null <<'PY' || true
 import json, sys, os, shlex
@@ -93,17 +216,16 @@ if out:
     print(json.dumps({"env": out, "hasCompletedOnboarding": True}, ensure_ascii=False))
 PY
 )"
-
     if [ -n "$SETTINGS_JSON" ] && [ "$SETTINGS_JSON" != "{}" ] && [ "$SETTINGS_JSON" != "null" ]; then
         printf '%s\n' "$SETTINGS_JSON" > "$CLAUDE_HOME/settings.json"
         chmod 600 "$CLAUDE_HOME/settings.json"
-        log_msg "settings.json 已写入: $CLAUDE_HOME/settings.json"
+        log_msg "settings.json 已写入"
     else
         log_msg "wizard 未提供 Anthropic 配置，跳过 settings.json（用户可稍后到应用设置里填）"
     fi
 fi
 
-# ~/.claude.json（Claude Code 的全局标记文件，幂等）
+# ~/.claude.json
 if [ ! -f "$HOME_DIR/.claude.json" ]; then
     printf '{"hasCompletedOnboarding": true}\n' > "$HOME_DIR/.claude.json"
     chmod 600 "$HOME_DIR/.claude.json"
@@ -111,16 +233,14 @@ if [ ! -f "$HOME_DIR/.claude.json" ]; then
 fi
 
 # ============================================================
-# 5. 属主修正
+# 7. 属主修正
 # ============================================================
 if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
     chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
         "${TRIM_PKGETC}" "${TRIM_PKGVAR}" "${TRIM_PKGHOME}" \
+        "$APP_DEST" "$HOME_DIR" \
         2>/dev/null || true
-    chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" \
-        "$SERVER_DIR" "$HOME_DIR" \
-        2>/dev/null || true
-    log_msg "属主已修正为 ${TRIM_USERNAME}:${TRIM_GROUPNAME:-?}"
+    log_msg "属主已修正"
 fi
 
 log_msg "=== install_callback 完成 (env_existed=${ENV_EXISTED}) ==="

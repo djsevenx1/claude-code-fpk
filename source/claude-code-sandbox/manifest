@@ -1,5 +1,5 @@
 appname=claude-code-sandbox
-version=1.2.6
+version=1.2.7
 display_name=Claude Code
 desc=<p>把 Anthropic Claude Code CLI 装到飞牛 NAS 上，以<b>包用户 + 工作目录隔离</b>方式沙箱运行，通过 Web 终端 (ttyd) 访问。</p><p>依赖 fnOS 应用商店的 <code>nodejs_v22</code> 运行时。</p>
 source=thirdparty
@@ -15,4 +15,4 @@ install_type=root
 install_dep_apps=nodejs_v22
 ctl_stop=true
 disable_authorization_path=false
-changelog=<ul><li>1.2.6 照 OpenClaw (oc-deploy v1.2.3) 写法重写：新建 <code>cmd/lib/log.sh</code> 统一日志到 <code>${TRIM_PKGVAR}/info.log</code>；<code>install_init</code>/<code>install_callback</code>/<code>main</code>/<code>uninstall_init</code>/<code>upgrade_*</code>/<code>config_*</code> 全部 source 共享 log；<code>diag_to_user</code> 失败时把"关键路径探测 + node 版本 + 最近 50 行日志 + 自查步骤"打包写到 <code>TRIM_TEMP_LOGFILE</code> 给用户看；<code>install_callback</code> 加幂等：重装时 .env/settings.json/.claude.json 已存在则保留（不再被空字符串覆盖 API Key）；<code>main</code> 和 <code>uninstall_init</code> 加 <code>pkill -f ttyd</code> 兜底清理（PID 文件丢了也能清残留）</li><li>1.2.5 图标换成 Anthropic Claude Code 官方 4 角 sparkle（coral #D97757 on 深蓝 #18182F）</li></ul>
+changelog=<ul><li>1.2.7 <b>修 v1.2.6 装失败的 bug</b>：v1.2.6 把 ttyd 和 node_modules 打进 <code>app.tgz</code> 但 install_callback 没解压，导致 <code>bin/ttyd</code> 不存在。v1.2.7 改回 v1.2.5 的运行时下载路线（OpenClaw 同款）：<code>install_callback</code> 联网下 ttyd + npm 装 claude-code，<b>FPK 缩小到 30K</b>，装得稳</li><li>1.2.7 install_callback 加多镜像源重试（npmmirror → 腾讯云 → npmjs.org 三个源都试一次），学 OpenClaw install_callback</li><li>1.2.7 install_callback 加 npm 镜像源可达性探测（<code>npm view</code> + <code>curl -I</code> fallback），失败时把"哪个源通哪个源不通"写进 <code>TRIM_TEMP_LOGFILE</code></li><li>1.2.6 照 OpenClaw 写法新增 <code>cmd/lib/log.sh</code> 统一日志到 info.log + diag_to_user 详细诊断 + install_callback 幂等保留 .env + main pkill 兜底清理（保留）</li></ul>

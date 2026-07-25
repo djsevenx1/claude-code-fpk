@@ -1,12 +1,12 @@
 #!/bin/bash
 # Claude Code 沙箱 - install_init
-# 安装前预检：只验证 nodejs_v22 运行时 + 预构建资源完整性。
+# 安装前预检：只验证 nodejs_v22 运行时 + 关键 cmd 脚本就位。
 #
-# 关键设计（v1.2.6，照 OpenClaw 写法改造）：
+# 关键设计（v1.2.7，照 OpenClaw + 飞牛官方文档）：
 #   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log
-#   - 失败时把"可执行诊断"（node 版本、python 探测、关键路径、最近日志）写到
-#     TRIM_TEMP_LOGFILE，fnOS 展示给用户（学 OpenClaw install_callback）
-#   - install_init 只做最少预检，详细初始化放 install_callback
+#   - 失败时 diag_to_user 把"诊断包"写到 TRIM_TEMP_LOGFILE
+#   - 轻量预检：ttyd 和 claude 在 install_callback 联网下载，不在此处检查
+#   - 不使用 set -u / exec 2>> / trap ERR
 
 # 引入共享日志
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
@@ -16,24 +16,50 @@ _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib"
 export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
 log_msg "=== install_init 开始 ==="
-log_msg "TRIM_APPNAME=${TRIM_APPNAME:-?}  TRIM_APPDEST=${TRIM_APPDEST:-?}"
+log_msg "TRIM_APPNAME=${TRIM_APPNAME:-?}  TRIM_APPDEST=${TRIM_APPDEST:-?}  TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
 
 # 1. nodejs_v22 运行时检测
 if ! command -v node >/dev/null 2>&1; then
     diag_to_user "安装预检失败" \
         "未检测到 nodejs_v22 运行时。请到 fnOS 应用中心搜索 'nodejs_v22' 安装后再重装 Claude Code。"
 fi
-log_msg "node 版本: $(node --version 2>/dev/null || echo '<failed>')"
+log_msg "node 版本: $(node --version 2>/dev/null || echo '<failed>')  npm: $(npm --version 2>/dev/null || echo '<failed>')"
 
-# 2. 预构建资源完整性（ttyd + claude 都在 FPK 里，不下载）
+# 2. 架构检查（兼容 fnOS 0.9.x 把 x86_64 上报为 x86）
+ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
+case "$ARCH" in
+    x86_64|amd64|x86)            NORM_ARCH="x86_64"  ;;
+    aarch64|arm64)                NORM_ARCH="aarch64" ;;
+    i386|i686|i486|i586)          NORM_ARCH="i386"    ;;
+    *)                            NORM_ARCH="$ARCH"   ;;
+esac
+case "$NORM_ARCH" in
+    x86_64|aarch64)
+        log_msg "架构 OK: $NORM_ARCH (raw=$ARCH)"
+        ;;
+    *) diag_to_user "安装预检失败" \
+        "不支持的 CPU 架构: $ARCH（仅支持 x86_64 / aarch64）" ;;
+esac
+
+# 3. FPK 自身完整性（cmd 脚本必须能解压出来）
 APP_DEST="${TRIM_APPDEST:-/var/apps/${TRIM_APPNAME:-claude-code-sandbox}/target}"
-if [ ! -x "${APP_DEST}/bin/ttyd" ]; then
+if [ ! -x "${APP_DEST}/cmd/main" ]; then
     diag_to_user "安装预检失败" \
-        "FPK 损坏：缺少 ${APP_DEST}/bin/ttyd。请重新下载安装包再装。"
+        "FPK 损坏：缺少 ${APP_DEST}/cmd/main。请重新下载安装包再装。"
 fi
-if [ ! -x "${APP_DEST}/node_modules/.bin/claude" ]; then
-    diag_to_user "安装预检失败" \
-        "FPK 损坏：缺少 ${APP_DEST}/node_modules/.bin/claude。请重新下载安装包再装。"
+
+# 4. 网络可达性（不阻塞，仅记录；install_callback 会用）
+if command -v curl >/dev/null 2>&1; then
+    if curl -fsSI --max-time 10 https://github.com >/dev/null 2>&1; then
+        log_msg "github.com 可达"
+    else
+        log_msg "WARN: github.com 不可达，install_callback 下载 ttyd 可能失败"
+    fi
+    if curl -fsSI --max-time 10 https://registry.npmmirror.com >/dev/null 2>&1; then
+        log_msg "npmmirror.com 可达"
+    else
+        log_msg "WARN: npmmirror 不可达，install_callback 装 claude-code 可能失败"
+    fi
 fi
 
 log_msg "=== install_init 完成 ==="

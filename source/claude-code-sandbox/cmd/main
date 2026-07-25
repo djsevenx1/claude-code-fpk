@@ -5,7 +5,7 @@
 # 沙箱：进程以包用户（run-as=package）身份运行 ttyd，chdir 到 $TRIM_PKGHOME/home/workspace
 #       Claude Code CLI 工作目录被限制在 WORKSPACE_DIR 之内
 #
-# 关键设计（v1.2.6，照 OpenClaw 写法改造）：
+# 关键设计（v1.2.7，照 OpenClaw 写法改造）：
 #   - 用 cmd/lib/log.sh 统一日志到 ${TRIM_PKGVAR}/info.log（不再单独 ttyd.log）
 #   - ttyd 鉴权 flag：必须用 -c（--credential），-a 是 --auth-bypass
 #   - nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
