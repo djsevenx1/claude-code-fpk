@@ -4,18 +4,26 @@
 #
 # 沙箱：进程以包用户（run-as=package）身份运行 ttyd，chdir 到 $TRIM_PKGHOME/home/workspace
 #       Claude Code CLI 工作目录被限制在 WORKSPACE_DIR 之内
-set -u
+#
+# 关键修复（v1.2.2）：
+#   - ttyd 鉴权 flag：原本 -a "${cred[0]:-}" 是 bug（-a 在 ttyd 里是 --auth-bypass，
+#     且 cred[0] 是字符串 "-c" 不是密码）。改为正确用 -c 通过数组展开
+#   - 移除 set -u（变量未设置时静默退出，不利于调试）
+#   - 改用 notepad 官方风格的 >> 日志追加
+#   - 修正变量名：${TRIM_RUN_USERNAME:-?} -> ${TRIM_USERNAME:-?}
 
-TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox.err}"
-mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
+LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/ttyd.log"
+PID_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/ttyd.pid"
 APP_HOME="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
 BIN_DIR="$APP_HOME/bin"
 ENV_FILE="${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env"
-PID_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/ttyd.pid"
-LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/ttyd.log"
+WORKSPACE_DIR="${TRIM_PKGHOME:-/var/apps/claude-code-sandbox/home}/home/workspace"
 
-die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; echo "$*" >&2; exit 1; }
-log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+mkdir -p "$WORKSPACE_DIR" 2>/dev/null || true
+
+log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+die() { echo "[$(date '+%H:%M:%S')] FATAL: $*" >> "$LOG_FILE"; exit 1; }
 
 # === 状态检查 ===
 is_running() {
@@ -31,15 +39,20 @@ start() {
     fi
 
     # 依赖
-    [ -x "$BIN_DIR/ttyd" ] || die "ttyd 不存在，请重新安装应用"
-    [ -x "$APP_HOME/node_modules/.bin/claude" ] || die "claude 未安装，请重新安装应用"
+    [ -x "$BIN_DIR/ttyd" ]                          || die "ttyd 不存在，请重新安装应用"
+    [ -x "$APP_HOME/node_modules/.bin/claude" ]     || die "claude 未安装，请重新安装应用"
 
+    # 引入 fnOS 商店的 Node.js v22
     export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
-    [ -r "$ENV_FILE" ] && { set -a; . "$ENV_FILE"; set +a; }
+
+    # 加载 .env
+    if [ -r "$ENV_FILE" ]; then
+        set -a
+        . "$ENV_FILE"
+        set +a
+    fi
 
     : "${TTYD_PORT:=7681}"
-    : "${WORKSPACE_DIR:=$TRIM_PKGHOME/home/workspace}"
-    mkdir -p "$WORKSPACE_DIR"
 
     # 用 runuser 切到包用户（root lifecycle 脚本的标准做法）
     local runner=()
@@ -47,30 +60,40 @@ start() {
         runner=(runuser -u "$TRIM_USERNAME" --)
     fi
 
-    # ttyd 鉴权参数
-    local cred=()
-    if [ -n "${TTYD_USER:-}" ]; then
-        cred+=(-c "${TTYD_USER}:${TTYD_PASSWORD:-}")
+    # ttyd 鉴权参数（v1.2.2 修复：必须用 -c，不能用 -a；用数组展开而不是取下标）
+    local cred_args=()
+    if [ -n "${TTYD_USER:-}" ] && [ -n "${TTYD_PASSWORD:-}" ]; then
+        cred_args=(-c "${TTYD_USER}:${TTYD_PASSWORD}")
+    elif [ -n "${TTYD_USER:-}" ]; then
+        cred_args=(-c "${TTYD_USER}:")
     fi
 
-    # 关键：-w 指定工作目录，让 Claude Code 启动后默认在沙箱目录
-    # --user-agent-arg 防止 ttyd 兼容性问题
-    log "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_RUN_USERNAME:-?}"
-    "${runner[@]}" "$BIN_DIR/ttyd" \
+    log "启动 ttyd: port=$TTYD_PORT workdir=$WORKSPACE_DIR user=${TRIM_USERNAME:-?}"
+
+    # nohup 保证父进程退出后 ttyd 不被 SIGHUP 干掉
+    nohup "${runner[@]}" "$BIN_DIR/ttyd" \
         -p "$TTYD_PORT" \
         -W \
-        -a "${cred[0]:-}" \
+        -i lo \
         -m 0 \
+        "${cred_args[@]}" \
         -t "titleFixed=Claude Code" \
         -w "$WORKSPACE_DIR" \
         bash >> "$LOG_FILE" 2>&1 &
 
-    echo $! > "$PID_FILE"
-    sleep 1
-    if ! is_running; then
-        die "ttyd 启动失败，请查看日志：$LOG_FILE"
-    fi
-    log "ttyd 启动成功 pid=$(cat "$PID_FILE")"
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+
+    # 等待 ttyd 端口就绪
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 0.5
+        if kill -0 "$pid" 2>/dev/null; then
+            log "ttyd 启动成功 pid=$pid"
+            return 0
+        fi
+    done
+    die "ttyd 启动后未保持运行，请查看日志：$LOG_FILE"
 }
 
 stop() {

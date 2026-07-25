@@ -1,56 +1,59 @@
 #!/bin/bash
 # Claude Code 沙箱 - install_init
-# 安装前预检：验证 nodejs_v22 运行时可用、目标架构支持、ttyd 静态二进制可下载。
-set -u
-export PATH="/var/apps/nodejs_v22/target/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# 安装前预检：验证 nodejs_v22 运行时可用、目标架构支持、网络可达。
+#
+# 关键设计（v1.2.2）：
+#   - 严格按 fnOS 官方 notepad 示例的写法：单文件日志，不用 exec 2>> / set -u
+#   - 避免 v1.2.0 的 bug：exec 2>> 写失败导致脚本静默退出
+#   - 重装检测用 ${TRIM_APPDEST}/cmd/main（实际路径），不用硬编码
 
-# UI 错误文件：只在 die() 时写，**绝不在 log 里写**
-# （fnOS 商店会把 TRIM_TEMP_LOGFILE 的任何内容当作用户可见错误，
-#  导致"安装中 100%"卡住不消失。）
-TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
-mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
-
-# 日志走 NAS 应用日志目录
 LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
+TEMP_LOG="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
+
+# 兜底创建目录
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+mkdir -p "$(dirname "$TEMP_LOG")" 2>/dev/null || true
 
-die() { echo "[$(date '+%H:%M:%S')] FATAL: $*" >>"$LOG_FILE"; echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
-log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
+log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+die() { echo "[$(date '+%H:%M:%S')] FATAL: $*" >> "$LOG_FILE"; echo "$*" > "$TEMP_LOG"; exit 1; }
 
-log "install_init: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
+log "install_init: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
 
-# 0. 幂等：检测是否重装（v1.1.x 残留）。残留会让 fnOS 商店进度回滚
-OLD_INSTALLED=""
-[ -x /var/apps/claude-code-sandbox/cmd/main ] && OLD_INSTALLED="1"
-if [ -n "$OLD_INSTALLED" ]; then
-    log "检测到旧版本残留，先执行 uninstall_init 清理"
-    if [ -x /var/apps/claude-code-sandbox/cmd/uninstall_init ]; then
-        bash /var/apps/claude-code-sandbox/cmd/uninstall_init || true
+# ============================================================
+# 0. 幂等：检测重装，调用 uninstall_init 清理
+# ============================================================
+APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+# v1.2.2 修复：用 ${TRIM_APPDEST} 而非硬编码 /var/apps/claude-code-sandbox/cmd/main
+if [ -x "${APP_DEST}/cmd/main" ]; then
+    log "检测到旧版本残留（${APP_DEST}/cmd/main 存在），执行 uninstall_init 清理"
+    if [ -x "${APP_DEST}/cmd/uninstall_init" ]; then
+        bash "${APP_DEST}/cmd/uninstall_init" >> "$LOG_FILE" 2>&1 || true
     fi
-    # 清理可能冲突的 ttyd 旧二进制
-    rm -f /var/apps/claude-code-sandbox/target/bin/ttyd 2>/dev/null || true
-    # 清理 node_modules（强制 install_callback 重新装，避免版本不一致）
-    rm -rf /var/apps/claude-code-sandbox/target/node_modules 2>/dev/null || true
+    # 清理可能冲突的 ttyd 旧二进制、node_modules、env
+    rm -f "${APP_DEST}/bin/ttyd" 2>/dev/null || true
+    rm -rf "${APP_DEST}/node_modules" 2>/dev/null || true
+    rm -f "${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env" 2>/dev/null || true
     log "旧残留清理完成"
 fi
 
-# 1. nodejs_v22 运行时
-# 关键：manifest 里有 install_dep_apps=nodejs_v22，fnOS 应用商店会**自己弹窗**问用户
-# 要不要装。我们这里不挡路（之前 v1.1.x 直接 die 把安装流程打回 0% 进度）。
-# 只在用户已经"忽略"或"拒绝"依赖安装时才报错，且报错信息要清晰指引。
+# ============================================================
+# 1. nodejs_v22 运行时检测
+# ============================================================
+# manifest 已经声明 install_dep_apps=nodejs_v22，fnOS 商店会自动弹窗。
+# 这里不阻挡（v1.2.1 之前是 die 阻挡，导致"100%→0%回滚"）。
+# 但要给出明确指引。
 NODEJS_PATH="/var/apps/nodejs_v22/target/bin"
-if ! command -v node >/dev/null 2>&1 && [ ! -x "$NODEJS_PATH/node" ]; then
-    # node 找不到，提示用户走应用商店
+if ! command -v node >/dev/null 2>&1 && [ ! -x "${NODEJS_PATH}/node" ]; then
     die "未检测到 nodejs_v22 运行时。
 
-请回飞牛应用中心 → 我的应用 → 找到 'nodejs_v22' → 手动点安装。
-装好后再重新点 Claude Code 的'安装'按钮。
+请回飞牛应用中心 → 我的应用 → 找到 'nodejs_v22' → 点安装。
+装好后再重新点 Claude Code 的'安装'。
 
 （manifest 已声明 install_dep_apps=nodejs_v22，理论上 fnOS 商店会
   在第一次安装时自动弹窗。如果被跳过，请手动从应用商店装。）"
 fi
-if [ ! -x "$NODEJS_PATH/node" ]; then
-    # 备用：直接 /var/apps 下找 nodejs_v22
+# 备用：fnOS 不同小版本路径可能不一致，全局找
+if [ ! -x "${NODEJS_PATH}/node" ]; then
     FOUND_NODE=$(find /var/apps -maxdepth 3 -name node -type f -executable 2>/dev/null | grep nodejs | head -1)
     if [ -z "$FOUND_NODE" ]; then
         die "nodejs_v22 装在非标准路径，且 /var/apps 下找不到 node。请确认应用商店的 nodejs_v22 已装好。"
@@ -58,12 +61,12 @@ if [ ! -x "$NODEJS_PATH/node" ]; then
         log "nodejs_v22 装在非标准路径: $FOUND_NODE（继续）"
     fi
 fi
-log "node=$(node -v)  npm=$(npm -v)"
+log "node=$(node -v) npm=$(npm -v)"
 
-# 2. 架构
+# ============================================================
+# 2. 架构检查（兼容 fnOS 0.9.x 把 x86_64 上报为 x86）
+# ============================================================
 ARCH="${TRIM_SYS_ARCH:-$(uname -m)}"
-# 规范化：fnOS 0.9.x 早期版本会把 x86_64 上报为 "x86"，某些容器/32-bit 兼容层
-# 会报 "i386/i686"。这里把常见别名都归一化到 x86_64 / aarch64 再判定。
 case "$ARCH" in
     x86_64|amd64|x86)            NORM_ARCH="x86_64"  ;;
     aarch64|arm64)                NORM_ARCH="aarch64" ;;
@@ -76,7 +79,9 @@ case "$NORM_ARCH" in
     *) die "不支持的 CPU 架构: $ARCH（仅支持 x86_64）" ;;
 esac
 
-# 3. 网络可达性（不阻塞，给 install_callback 用）
+# ============================================================
+# 3. 网络可达性（不阻塞，仅记录）
+# ============================================================
 if command -v curl >/dev/null 2>&1; then
     if curl -fsSI --max-time 10 https://github.com >/dev/null 2>&1; then
         log "github.com 可达"
@@ -90,7 +95,17 @@ if command -v curl >/dev/null 2>&1; then
     fi
 fi
 
+# ============================================================
+# 4. 磁盘空间（不阻塞，仅记录）
+# ============================================================
+if command -v df >/dev/null 2>&1; then
+    AVAIL_KB=$(df -Pk "${TRIM_PKGVAR:-/var/apps}" 2>/dev/null | awk 'NR==2 {print $4}')
+    if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 204800 ]; then
+        log "WARN: 可用空间 ${AVAIL_KB}KB < 200MB，可能装不下 claude-code"
+    fi
+fi
+
 log "install_init OK"
-# 关键：成功路径下确保 TRIM_TEMP_LOGFILE 不存在/为空，商店才会切到"完成"
-: > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+# 关键：成功路径下确保 TRIM_TEMP_LOGFILE 干净，fnOS 商店才会切到"完成"
+: > "$TEMP_LOG" 2>/dev/null || true
 exit 0
