@@ -1,28 +1,38 @@
 #!/bin/bash
 # Claude Code 沙箱 - upgrade_callback
 # 升级后：npm update 拉新版本 Claude Code
-set -u
-TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.err}"
-LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
-mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" "$(dirname "$LOG_FILE")" 2>/dev/null || true
-exec 2>>"$LOG_FILE"
+#
+# 关键设计（v1.2.3）：
+#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE
+#   - 不使用 set -u / exec 2>> / trap ERR
 
-die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; echo "$*" >&2; exit 1; }
-log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
-trap 'echo "upgrade_callback 在第 ${BASH_LINENO[0]} 行失败" > "$TRIM_TEMP_LOGFILE"' ERR
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.log}"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+: > "$LOG_FILE" 2>/dev/null || true
+
+log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+die() {
+    log "FATAL: $*"
+    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+    exit 1
+}
+
+log "upgrade_callback 开始: TRIM_APPDEST=${TRIM_APPDEST:-?}"
 
 : "${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
 export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
 
 if [ -f "$TRIM_APPDEST/package.json" ]; then
     log "升级 @anthropic-ai/claude-code ..."
-    (cd "$TRIM_APPDEST" && npm update --no-audit --no-fund --loglevel=error) >>"$LOG_FILE" 2>&1 \
-        || die "Claude Code 升级失败，请查看日志：$LOG_FILE"
+    if ! (cd "$TRIM_APPDEST" && npm update --no-audit --no-fund --loglevel=error) >> "$LOG_FILE" 2>&1; then
+        die "Claude Code 升级失败，请查看日志：$LOG_FILE"
+    fi
     log "升级完成"
 fi
 
 if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
     chown -R "$TRIM_USERNAME:$TRIM_GROUPNAME" "$TRIM_APPDEST/node_modules" 2>/dev/null || true
 fi
-trap - ERR
+
+log "upgrade_callback 完成"
 exit 0

@@ -2,3 +2,5 @@ release/
 fpk/
 *.log
 .DS_Store
+build/
+build_fnpack

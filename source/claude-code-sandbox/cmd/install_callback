@@ -2,28 +2,35 @@
 # Claude Code 沙箱 - install_callback
 # 安装回调：装 ttyd + 装 Claude Code CLI + 写 .env + 写 settings.json
 #
-# 关键设计（v1.2.2）：
-#   - 严格按 fnOS 官方 notepad 示例：单文件日志 append，不用 exec 2>> / set -u
-#   - 修复 v1.2.0 bug：exec 2>> 写失败 → 脚本静默退出 → TRIM_TEMP_LOGFILE 写了
-#     但 LOG_FILE 没写 → 用户按系统提示找 info.log 找不到
-#   - 不再无脑 trap ERR：用"每一步显式 die()"模式，更可控
-#   - die() 先写 LOG_FILE（详细），再写 TRIM_TEMP_LOGFILE（用户可见）
+# 关键设计（v1.2.3）：
+#   - 严格按 fnOS 官方 notepad 示例的写法：单文件日志 append
+#   - 生命周期脚本统一用 $TRIM_TEMP_LOGFILE（系统保证可写，失败时弹给用户）
+#   - 不用 set -u / exec 2>> / trap ERR：v1.2.0 之前这些都曾导致脚本静默退出
+#   - die() 先写日志详细原因，再写 TRIM_TEMP_LOGFILE 简短给用户
 
-LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
-TEMP_LOG="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.log}"
+# 可选：用户期望的 info.log（系统错误提示里写明的位置）
+INFO_LOG=""
+if [ -n "${TRIM_PKGVAR:-}" ]; then
+    INFO_LOG="${TRIM_PKGVAR}/info.log"
+fi
 
-# 兜底目录
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-mkdir -p "$(dirname "$TEMP_LOG")" 2>/dev/null || true
+[ -n "$INFO_LOG" ] && mkdir -p "$(dirname "$INFO_LOG")" 2>/dev/null || true
+: > "$LOG_FILE" 2>/dev/null || true
 
-log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+log() {
+    local line="[$(date '+%H:%M:%S')] $*"
+    echo "$line" >> "$LOG_FILE"
+    [ -n "$INFO_LOG" ] && echo "$line" >> "$INFO_LOG"
+}
 die() {
-    echo "[$(date '+%H:%M:%S')] FATAL: $*" >> "$LOG_FILE"
-    echo "$*" > "$TEMP_LOG"
+    log "FATAL: $*"
+    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
     exit 1
 }
 
-log "install_callback 开始: TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_USERNAME=${TRIM_USERNAME:-?}"
+log "install_callback 开始: TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_USERNAME=${TRIM_USERNAME:-?} TRIM_PKGVAR=${TRIM_PKGVAR:-?}"
 
 # ============================================================
 # 1. 路径与变量兜底
@@ -85,7 +92,7 @@ if [ ! -f "$APP_DEST/package.json" ]; then
     cat > "$APP_DEST/package.json" <<'JSON'
 {
   "name": "claude-code-sandbox",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "description": "Claude Code 沙箱 for 飞牛 fnOS",
   "dependencies": {
@@ -188,7 +195,4 @@ if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
 fi
 
 log "install_callback 完成"
-
-# 成功路径下清空 TRIM_TEMP_LOGFILE，避免 fnOS 商店把它当错误显示
-: > "$TEMP_LOG" 2>/dev/null || true
 exit 0

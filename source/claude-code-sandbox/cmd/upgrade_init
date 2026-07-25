@@ -1,12 +1,27 @@
 #!/bin/bash
 # Claude Code 沙箱 - upgrade_init
-set -u
-TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.err}"
-mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
-die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+# 升级前：停服务
+#
+# 关键设计（v1.2.3）：
+#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE
+
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-upgrade.log}"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+: > "$LOG_FILE" 2>/dev/null || true
+
+log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+die() {
+    log "FATAL: $*"
+    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+    exit 1
+}
 
 # 升级前停止服务
-if [ -x /var/apps/claude-code-sandbox/cmd/main ]; then
-    /var/apps/claude-code-sandbox/cmd/main stop || true
+APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+if [ -x "${APP_DEST}/cmd/main" ]; then
+    log "停止服务: ${APP_DEST}/cmd/main stop"
+    "${APP_DEST}/cmd/main" stop >> "$LOG_FILE" 2>&1 || true
 fi
+
+log "upgrade_init 完成"
 exit 0

@@ -1,15 +1,21 @@
 #!/bin/bash
 # Claude Code 沙箱 - config_callback
 # 改配置后：用向导值重写 .env 与 settings.json，然后重启服务
-set -u
-TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.err}"
-LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
-mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" "$(dirname "$LOG_FILE")" 2>/dev/null || true
-exec 2>>"$LOG_FILE"
+#
+# 关键设计（v1.2.3）：用 $TRIM_TEMP_LOGFILE
 
-die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; echo "$*" >&2; exit 1; }
-log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
-trap 'echo "config_callback 在第 ${BASH_LINENO[0]} 行失败" > "$TRIM_TEMP_LOGFILE"' ERR
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-config.log}"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+: > "$LOG_FILE" 2>/dev/null || true
+
+log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+die() {
+    log "FATAL: $*"
+    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+    exit 1
+}
+
+log "config_callback 开始"
 
 : "${TRIM_PKGETC:?TRIM_PKGETC 未设置}"
 : "${TRIM_PKGHOME:?TRIM_PKGHOME 未设置}"
@@ -32,7 +38,7 @@ write_kv "ANTHROPIC_MODEL"      "${wizard_anthropic_model:-claude-sonnet-4-5}"
 write_kv "ANTHROPIC_API_KEY"    "${wizard_anthropic_api_key:-}"
 write_kv "ANTHROPIC_AUTH_TOKEN" "${wizard_anthropic_auth_token:-}"
 chmod 600 "$ENV_FILE"
-log ".env 已更新"
+log ".env 已更新: $ENV_FILE"
 
 # 重建 settings.json
 export PATH="/var/apps/nodejs_v22/target/bin:${PATH}"
@@ -66,7 +72,11 @@ if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
 fi
 
 # 重启
-[ -x /var/apps/claude-code-sandbox/cmd/main ] && /var/apps/claude-code-sandbox/cmd/main start || true
+APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+if [ -x "${APP_DEST}/cmd/main" ]; then
+    log "重启服务: ${APP_DEST}/cmd/main start"
+    "${APP_DEST}/cmd/main" start >> "$LOG_FILE" 2>&1 || true
+fi
 
-trap - ERR
+log "config_callback 完成"
 exit 0

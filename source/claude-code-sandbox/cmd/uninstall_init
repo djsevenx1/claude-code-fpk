@@ -1,19 +1,31 @@
 #!/bin/bash
 # Claude Code 沙箱 - uninstall_init
-# 注：fnpack 1.2.3 build 时不识别 wizard/uninstall，所以我们没有单独的 uninstall_callback
-#     所有卸载清理工作放在 uninstall_init（fnOS 卸载前调用）
-set -u
-TRIM_TEMP_LOGFILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall.err}"
-LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
-mkdir -p "$(dirname "$TRIM_TEMP_LOGFILE")" 2>/dev/null || true
-exec 2>>"$LOG_FILE"
+# 卸载前：停服务 + 安全删除 API Key
+#
+# 关键设计（v1.2.3）：
+#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE 记录日志
+#   - 不使用 set -u / exec 2>> / trap ERR：避免静默失败
+#   - 不用 fallback 路径：用 TRIM_TEMP_LOGFILE（系统保证可写）
 
-log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_FILE" >&2; }
-die() { echo "$*" > "$TRIM_TEMP_LOGFILE"; exit 1; }
-trap 'echo "uninstall_init 在第 ${BASH_LINENO[0]} 行失败" > "$TRIM_TEMP_LOGFILE"' ERR
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-uninstall.log}"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+: > "$LOG_FILE" 2>/dev/null || true
 
-# 1. 停服务
-[ -x /var/apps/claude-code-sandbox/cmd/main ] && /var/apps/claude-code-sandbox/cmd/main stop || true
+log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
+die() {
+    log "FATAL: $*"
+    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+    exit 1
+}
+
+log "uninstall_init 开始"
+
+# 1. 停服务（用 TRIM_APPDEST 定位，避免硬编码）
+APP_DEST="${TRIM_APPDEST:-/var/apps/claude-code-sandbox/target}"
+if [ -x "${APP_DEST}/cmd/main" ]; then
+    log "停止服务: ${APP_DEST}/cmd/main stop"
+    "${APP_DEST}/cmd/main" stop >> "$LOG_FILE" 2>&1 || true
+fi
 
 # 2. 安全删除 .env（API Key / Token 敏感）
 ENV_FILE="${TRIM_PKGETC:-/var/apps/claude-code-sandbox/etc}/claude.env"
@@ -23,10 +35,9 @@ if [ -f "$ENV_FILE" ]; then
     else
         rm -f "$ENV_FILE"
     fi
-    log "已安全删除 .env"
+    log "已安全删除 .env: $ENV_FILE"
 fi
 
 # 3. 退出时由 fnOS 自动清理 target/etc/var/home 等目录
-log "uninstall_init 完成"
-trap - ERR
+log "uninstall_init 完成（target/etc/var/home 由 fnOS 清理）"
 exit 0

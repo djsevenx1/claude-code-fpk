@@ -2,22 +2,28 @@
 # Claude Code 沙箱 - install_init
 # 安装前预检：验证 nodejs_v22 运行时可用、目标架构支持、网络可达。
 #
-# 关键设计（v1.2.2）：
-#   - 严格按 fnOS 官方 notepad 示例的写法：单文件日志，不用 exec 2>> / set -u
-#   - 避免 v1.2.0 的 bug：exec 2>> 写失败导致脚本静默退出
-#   - 重装检测用 ${TRIM_APPDEST}/cmd/main（实际路径），不用硬编码
+# 关键设计（v1.2.3）：
+#   - 严格按 fnOS 官方文档：生命周期脚本用 $TRIM_TEMP_LOGFILE 记录日志
+#     （系统保证该路径存在并可写，失败时由系统直接展示给用户）
+#   - 不再用 ${TRIM_PKGVAR:-...} 这种 fallback 兜底：fallback 是 /var/apps/.../var
+#     这个软链在 install_init 阶段可能还没建出来，导致日志永远写不出来
+#   - 不使用 set -u / exec 2>> / trap ERR：避免静默失败
 
-LOG_FILE="${TRIM_PKGVAR:-/var/apps/claude-code-sandbox/var}/info.log"
-TEMP_LOG="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.err}"
-
-# 兜底创建目录
+# fnOS 官方约定：生命周期脚本的日志写到 TRIM_TEMP_LOGFILE
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/claude-code-sandbox-install.log}"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-mkdir -p "$(dirname "$TEMP_LOG")" 2>/dev/null || true
+# 先把日志文件清空 / 创建出来
+: > "$LOG_FILE" 2>/dev/null || true
 
 log() { echo "[$(date '+%H:%M:%S')] $*" >> "$LOG_FILE"; }
-die() { echo "[$(date '+%H:%M:%S')] FATAL: $*" >> "$LOG_FILE"; echo "$*" > "$TEMP_LOG"; exit 1; }
+die() {
+    log "FATAL: $*"
+    # fnOS 在 exit 1 时会把 $TRIM_TEMP_LOGFILE 内容直接弹给用户
+    printf '%s\n' "$*" > "$TRIM_TEMP_LOGFILE" 2>/dev/null || true
+    exit 1
+}
 
-log "install_init: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
+log "install_init 开始: TRIM_APPNAME=${TRIM_APPNAME:-?} TRIM_APPVER=${TRIM_APPVER:-?} TRIM_APPDEST=${TRIM_APPDEST:-?} TRIM_SYS_ARCH=${TRIM_SYS_ARCH:-$(uname -m)}"
 
 # ============================================================
 # 0. 幂等：检测重装，调用 uninstall_init 清理
@@ -106,6 +112,4 @@ if command -v df >/dev/null 2>&1; then
 fi
 
 log "install_init OK"
-# 关键：成功路径下确保 TRIM_TEMP_LOGFILE 干净，fnOS 商店才会切到"完成"
-: > "$TEMP_LOG" 2>/dev/null || true
 exit 0
